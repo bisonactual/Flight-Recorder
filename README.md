@@ -24,6 +24,7 @@ All PNC's have a Z limit but Z must be homed for retract to work
 
 Set $790=0 for tslots and lollipops etc to disable retracts
 
+If you want to test this out before using on a real flexihal, I've updated my simulator.
 
 The process is below:
 
@@ -38,52 +39,53 @@ Bish Bash Bosh.
 
 (Strongly suggest you bench test this instead of sticking it straight on a pnc. USE AT YOUR OWN RISK)
 
-Clanker output below.
 
+In detail:
 
 A grblHAL plugin that keeps a record of the running job in non-volatile memory
 (the Flexi-HAL A7's I2C FRAM), so a sender can resume after the PC, the link or
 the controller has gone away, and that gets the tool out of the cut when the
 stream stops. Open source (GPLv3, like grblHAL).
 
-- **What it records:** the N-number of the line the steppers are executing
+  It records the N-number of the line the steppers are executing
   (never ahead of the machine), machine position, tool, work offset, and why
   the job stopped: program end, alarm, reset, reboot, or the stream going away.
-- **Stream-loss retract:** with the spindle on, if the sender stops feeding the
+  
+  With the spindle on, if the sender stops feeding the
   job (timeout) or its link goes (USB port or network client closed, or the
   input taken over), the board blocks all input, lets the executing line
   finish, retracts straight up to machine Z −20, stops the spindle, records it
   and raises alarm 80. A retract that can't finish stops the machine (alarm 81).
-- **Resume:** the sender reads `$FLIGHT`, rebuilds the modal state up to the
+  
+  To resume the sender reads `$FLIGHT`, rebuilds the modal state up to the
   recorded line, re-enters straight down onto its start and streams on.
-- **Event log:** the last 1000 events across reboots (`$EVENTS`): resets and
+  
+  The event log records the last 1000 events across reboots (`$EVENTS`): resets and
   their cause (brown-out, reset pin, watchdog), alarms, error replies, inputs
   and limit switches tripping, the sender's link coming and going, and Modbus
-  timeouts and CRC errors. Aimed at the "silent" faults EMI causes.
-- **Watchdog (`_FR_WD` builds):** if the controller itself hangs, the
+  timeouts and CRC errors. Aimed at the "silent" and annoying faults EMI causes.
+  
+  If the controller itself hangs, the
   hardware watchdog resets it after `$793` seconds (3–10, default 5), which
   stops the spindle; the board waits in its homing alarm and the job can be
   resumed. Without it a hung controller keeps the spindle turning until
   someone presses reset.
 
-The sender side is in [docs/COMMANDS.md](docs/COMMANDS.md).
 
 ## Supported hardware
 
-- **Flexi-HAL Rev A7** with the EEPROM at **U27** replaced by an
-  **FM24V10** (Infineon, 1 Mbit / 128 KB I2C FRAM, SOIC-8). This direct
+ **Flexi-HAL Rev A7 ONLY** with the EEPROM at **U27** replaced by I2C FRAM (I used Infineon, 1 Mbit / 128 KB I2C FRAM, SOIC-8). This direct
   replacement is the only supported storage.
   - grblHAL's settings keep the first 16 KB, as before; the recorder uses the
     space after them.
   - At start-up the recorder checks the chip is that FRAM and leaves it alone
     otherwise (it reports `Flight Recorder (no storage)`): a 16 KB part would
     have its settings overwritten, and an EEPROM would wear out.
-- **MPG stays off** in these builds.
-- Connection over **USB** or the **uFlexiNET** network module.
+- **Leave MPG off**
+- Connection over **USB** or the **uFlexiNET** network module works
 
 ## Layout
 
-```text
 plugin/                 the grblHAL plugin
   flight_recorder.c/h     record, stream-loss retract, $ commands, settings
   event_log.c/h           the event log
