@@ -7,15 +7,21 @@ This is part one of my changes, and does not include a spool. It adds a flight r
 Watchdog builds should additionally reboot the board should it be frozen. I suggest 5 seconds as the default setting.
 
 $EVENT brings up the event log (you can use $events=n for n records)
+
 $FLIGHT shows the current flight record: state, why it stopped, line, tlo, wcs, etc 
+
 $FLIGHTCLEAR clears it
+
 $EVENTSCLEAR clears the event log
+
 $WATCHDOGTEST makes the board freeze so you can test it with a watchdog build (only works in idle or alarm)
 
 Alarm 80 means the connection was lost mid-job. The tool was retracted and the spindle stopped, so you can resume from the flight record.
+
 Alarm 81 means the connection was lost and the retract couldn’t finish, so the machine stopped where it was.
 
 All PNC's have a Z limit but Z must be homed for retract to work
+
 Set $790=0 for tslots and lollipops etc to disable retracts
 
 
