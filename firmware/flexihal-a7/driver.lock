@@ -1,0 +1,7 @@
+# Expatria's Flexi-HAL A7 driver (their grblHAL STM32F4xx fork) that our builds extend.
+DRIVER_URL=https://github.com/Expatria-Technologies/STM32F4xx.git
+DRIVER_COMMIT=bd233169ef05596c463c73416007f2f2caa97128   # branch F446_Flexi_HAL, "add 5 axis bill mill build."
+
+# Their tree records a status light (rgb) plugin commit that was never published (f4b2457).
+# We use the newest published one, with patches/rgb-bit-count.patch so it builds against their core.
+RGB_COMMIT=672ebd8beeed746b5c668be18b4e4c48b6c14883

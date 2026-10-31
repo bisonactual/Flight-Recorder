@@ -1,0 +1,258 @@
+{
+ "hang-ws": {
+  "scenario": "hang",
+  "via": "ws",
+  "record": {
+   "state": "Retracted",
+   "why": "timeout",
+   "job": 3476692858,
+   "ln": 1702,
+   "boot": "1",
+   "alarm": "0",
+   "tool": "0",
+   "wcs": "G54",
+   "flags": "23",
+   "mpos": [
+    -296.744,
+    -268.004,
+    -66.0,
+    0.0,
+    0.0
+   ]
+  },
+  "resumed_from": "N1702G1F1000.000000X3.254167Y31.995833",
+  "resume": {
+   "result": "done",
+   "finished": true,
+   "errors": [],
+   "alarms": []
+  },
+  "final_record": {
+   "state": "Completed",
+   "why": "none",
+   "job": 3476692858,
+   "ln": 4255,
+   "boot": "1",
+   "alarm": "0",
+   "tool": "0",
+   "wcs": "G54",
+   "flags": "11",
+   "mpos": [
+    -253.216,
+    -296.188,
+    -45.0,
+    0.0,
+    0.0
+   ]
+  },
+  "coverage_max_mm": 0.0192,
+  "coverage_p99_mm": 0.0094
+ },
+ "hang-usb": {
+  "scenario": "hang",
+  "via": "usb",
+  "record": {
+   "state": "Retracted",
+   "why": "timeout",
+   "job": 3476692858,
+   "ln": 2128,
+   "boot": "1",
+   "alarm": "0",
+   "tool": "0",
+   "wcs": "G54",
+   "flags": "13",
+   "mpos": [
+    -285.344,
+    -260.784,
+    -66.0,
+    0.0,
+    0.0
+   ]
+  },
+  "resumed_from": "N2128G1F1000.000000X14.654167Y39.216667",
+  "resume": {
+   "result": "done",
+   "finished": true,
+   "errors": [],
+   "alarms": []
+  },
+  "final_record": {
+   "state": "Completed",
+   "why": "none",
+   "job": 3476692858,
+   "ln": 4255,
+   "boot": "1",
+   "alarm": "0",
+   "tool": "0",
+   "wcs": "G54",
+   "flags": "21",
+   "mpos": [
+    -253.216,
+    -296.188,
+    -45.0,
+    0.0,
+    0.0
+   ]
+  },
+  "coverage_max_mm": 0.0224,
+  "coverage_p99_mm": 0.0094
+ },
+ "close-usb": {
+  "scenario": "close",
+  "via": "usb",
+  "record": {
+   "state": "Retracted",
+   "why": "usb",
+   "job": 3476692858,
+   "ln": 2341,
+   "boot": "1",
+   "alarm": "0",
+   "tool": "0",
+   "wcs": "G54",
+   "flags": "13",
+   "mpos": [
+    -295.268,
+    -253.144,
+    -66.0,
+    0.0,
+    0.0
+   ]
+  },
+  "resumed_from": "N2341G1F1000.000000X4.731250Y46.856250",
+  "resume": {
+   "result": "done",
+   "finished": true,
+   "errors": [],
+   "alarms": []
+  },
+  "final_record": {
+   "state": "Completed",
+   "why": "none",
+   "job": 3476692858,
+   "ln": 4255,
+   "boot": "1",
+   "alarm": "0",
+   "tool": "0",
+   "wcs": "G54",
+   "flags": "11",
+   "mpos": [
+    -253.216,
+    -296.188,
+    -45.0,
+    0.0,
+    0.0
+   ]
+  },
+  "coverage_max_mm": 0.0167,
+  "coverage_p99_mm": 0.0087
+ },
+ "close-ws": {
+  "scenario": "close",
+  "via": "ws",
+  "record": {
+   "state": "Retracted",
+   "why": "network",
+   "job": 3476692858,
+   "ln": 2960,
+   "boot": "1",
+   "alarm": "0",
+   "tool": "0",
+   "wcs": "G54",
+   "flags": "23",
+   "mpos": [
+    -274.72,
+    -285.044,
+    -66.0,
+    0.0,
+    0.0
+   ]
+  },
+  "resumed_from": "N2960G1F1000.000000X25.281250Y14.954167",
+  "resume": {
+   "result": "done",
+   "finished": true,
+   "errors": [],
+   "alarms": []
+  },
+  "final_record": {
+   "state": "Completed",
+   "why": "none",
+   "job": 3476692858,
+   "ln": 4255,
+   "boot": "1",
+   "alarm": "0",
+   "tool": "0",
+   "wcs": "G54",
+   "flags": "21",
+   "mpos": [
+    -253.216,
+    -296.188,
+    -45.0,
+    0.0,
+    0.0
+   ]
+  },
+  "coverage_max_mm": 0.0195,
+  "coverage_p99_mm": 0.0089
+ },
+ "power-ws": {
+  "scenario": "power",
+  "via": "ws",
+  "record": {
+   "state": "Stopped",
+   "why": "reboot",
+   "job": 3476692858,
+   "ln": 1165,
+   "boot": "2",
+   "alarm": "0",
+   "tool": "0",
+   "wcs": "G54",
+   "flags": "23",
+   "mpos": [
+    -294.484,
+    -274.06,
+    -66.0,
+    0.0,
+    0.0
+   ]
+  },
+  "resumed_from": "N1165G1F1000.000000X4.800000Y25.708333",
+  "resume": {
+   "result": "done",
+   "finished": true,
+   "errors": [],
+   "alarms": []
+  },
+  "final_record": {
+   "state": "Completed",
+   "why": "none",
+   "job": 3476692858,
+   "ln": 4255,
+   "boot": "2",
+   "alarm": "0",
+   "tool": "0",
+   "wcs": "G54",
+   "flags": "21",
+   "mpos": [
+    -253.216,
+    -296.188,
+    -45.0,
+    0.0,
+    0.0
+   ]
+  },
+  "coverage_max_mm": 0.0215,
+  "coverage_p99_mm": 0.0087,
+  "power_cut": {
+   "last_position": [
+    -294.976,
+    -274.22,
+    -66.0
+   ],
+   "on_line": 1165,
+   "distance_mm": 0.0014,
+   "recorded_line": 1165,
+   "verdict": "exact"
+  }
+ }
+}

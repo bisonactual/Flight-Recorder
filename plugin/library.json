@@ -1,0 +1,9 @@
+{
+  "name": "flight_recorder",
+  "version": "0.1.0",
+  "description": "Flight recorder plugin for grblHAL: job record in FRAM, stream-loss retract",
+  "license": "GPL-3.0-or-later",
+  "build": {
+    "srcFilter": ["+<*.c>", "-<storage_file.c>"]
+  }
+}

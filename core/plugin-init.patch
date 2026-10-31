@@ -1,0 +1,14 @@
+--- a/plugins_init.h
++++ b/plugins_init.h
+@@ -258,6 +258,11 @@
+   keyway_init();
+ #endif
+ 
++#if FLIGHT_RECORDER_ENABLE
++    extern void flight_recorder_init (void);
++    flight_recorder_init(); // after the other plugins, so their NVS space doesn't move
++#endif
++
+ // End third party plugin definitions.
+ 
+ #if ODOMETER_ENABLE

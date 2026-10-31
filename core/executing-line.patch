@@ -1,0 +1,65 @@
+diff --git a/stepper.c b/stepper.c
+index 21e8cf9..640f818 100644
+--- a/stepper.c
++++ b/stepper.c
+@@ -68,6 +68,7 @@ DCRAM static segment_t segment_buffer[SEGMENT_BUFFER_SIZE];
+ 
+ // Stepper ISR data struct. Contains the running data for the main stepper ISR.
+ static stepper_t st = {};
++static volatile uint32_t executing_line_number = 0;
+ 
+ #if ADAPTIVE_MULTI_AXIS_STEP_SMOOTHING
+ typedef struct {
+@@ -499,6 +500,7 @@ ISR_CODE void ISR_FUNC(stepper_driver_interrupt_handler)(void)
+ 
+                 st.exec_block = st.exec_segment->exec_block;
+                 st.step_event_count = st.exec_block->step_event_count;
++                executing_line_number = st.exec_block->line_number;
+                 st.new_block = true;
+ #if ENABLE_BACKLASH_COMPENSATION
+                 backlash_motion = st.exec_block->backlash_motion;
+@@ -800,6 +802,14 @@ void st_rpm_changed (float rpm)
+     prep.current_spindle_rpm = rpm;
+ }
+ 
++// Returns the line number of the block the steppers are executing, or of the last one executed.
++// Unlike the planner's current block, which the segment generator may have moved past,
++// this never runs ahead of the motion.
++uint32_t st_get_executing_line_number (void)
++{
++    return executing_line_number;
++}
++
+ // Called by planner_recalculate() when the executing block is updated by the new plan.
+ void st_update_plan_block_parameters (bool fast_hold)
+ {
+@@ -954,6 +964,7 @@ void st_prep_buffer (void)
+                 st_prep_block->offset_id = pl_block->offset_id;
+                 st_prep_block->backlash_motion = pl_block->condition.backlash_motion;
+                 st_prep_block->message = pl_block->message;
++                st_prep_block->line_number = pl_block->line_number;
+                 pl_block->message = NULL;
+ 
+                 // Initialize segment buffer data for generating the segments.
+diff --git a/stepper.h b/stepper.h
+index 5fc8640..4364560 100644
+--- a/stepper.h
++++ b/stepper.h
+@@ -60,6 +60,7 @@ typedef struct st_block {
+     bool dynamic_rpm;                  //!< Tracks motions that require dynamic RPM adjustment
+     offset_id_t offset_id;
+     spindle_ptrs_t *spindle;           //!< Pointer to current spindle for motions that require dynamic RPM adjustment
++    uint32_t line_number;              //!< Line number of the planner block, for reporting the line being executed
+ } st_block_t;
+ 
+ typedef struct st_segment {
+@@ -153,6 +154,9 @@ void st_update_plan_block_parameters (bool fast_hold);
+ // Called by realtime status reporting if realtime rate reporting is enabled in config.h.
+ float st_get_realtime_rate (void);
+ 
++// Returns the line number of the block the steppers are executing, or of the last one executed.
++uint32_t st_get_executing_line_number (void);
++
+ void stepper_driver_interrupt_handler (void);
+ 
+ offset_id_t st_get_offset_id (void);
