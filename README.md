@@ -111,25 +111,3 @@ tool has never been. `core/executing-line.patch` (15 lines in `stepper.c/h`)
 copies the line number into the stepper's block and records it when the
 stepper interrupt starts executing that block. It is general enough to offer
 upstream.
-
-## Building
-
-**Firmware (Flexi-HAL A7):** see [firmware/README.md](firmware/README.md).
-
-```bash
-firmware/flexihal-a7/build.sh f446re_flexi_cnc_printnc_eth_sd_fr
-```
-
-**Simulator** ([GRBLHAL-Sim](https://github.com/bisonactual/GRBLHAL-Sim),
-branch `usb-stream` until merged):
-
-```bash
-cmake -S GRBLHAL-Sim -B build -DCMAKE_BUILD_TYPE=Release -DFLIGHT_RECORDER_DIR=$PWD/Flight-Recorder
-cmake --build build -j3
-./build/grblHAL_flexihal_sim -u /tmp/flexihal-usb -w 8080
-```
-
-## Evidence
-
-See [evidence/](evidence/). Runs use the FreeCAD job in
-`evidence/programs/freecad_fcL_spindle.nc` in the simulator at 4× speed.
