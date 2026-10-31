@@ -1,5 +1,27 @@
 # Flight-Recorder
 
+This addon is highly experimental, requires hardware changes, and only currently supports the Flexihal-A7 by Expatria. It very likely voids any warranty or customer support from Expatria. Use at your own risk.
+
+This is part one of my changes, and does not include a spool. It adds a flight recorder that saves the position of your program and retracts and stops the spindle, and allows you to restore it from a supported sender (currently my fork of flexisender.... soon) - it also adds an event log to diagnose EMI etc.
+
+Watchdog builds should additionally reboot board should it be frozen. 
+
+The process is below:
+
+<img width="1280" height="1046" alt="image" src="https://github.com/user-attachments/assets/dfe2bff7-8b76-45b1-97ad-a023a0b371a7" />
+
+To begin, you need to locate U27 (to the left of the USB, between the MCU and port) and remove the EEPROM. You must replace this chip with ferromagnetic RAM, and it must be I2C. 
+I used https://www.infineon.com/part/FM24V10-G which is a 1mbit chip, but 512kbit may work. SPI will not work. It is mostly a drag and drop replacement, and you put your FRAM where the EEPROM used to be.
+
+You then need to install the firmware provided here. Then use flexisender and off you go.
+
+Bish Bash Bosh. 
+
+(Strongly suggest you bench test this instead of sticking it straight on a pnc. USE AT YOUR OWN RISK)
+
+Clanker output below.
+
+
 A grblHAL plugin that keeps a record of the running job in non-volatile memory
 (the Flexi-HAL A7's I2C FRAM), so a sender can resume after the PC, the link or
 the controller has gone away, and that gets the tool out of the cut when the
