@@ -50,7 +50,7 @@
    ]
   },
   "coverage_max_mm": 0.0192,
-  "coverage_p99_mm": 0.0094
+  "coverage_p99_mm": 0.0089
  },
  "hang-usb": {
   "jumps": 1,
@@ -99,8 +99,8 @@
     0.0
    ]
   },
-  "coverage_max_mm": 0.0213,
-  "coverage_p99_mm": 0.0092
+  "coverage_max_mm": 0.0234,
+  "coverage_p99_mm": 0.0094
  },
  "close-usb": {
   "jumps": 1,
@@ -149,8 +149,8 @@
     0.0
    ]
   },
-  "coverage_max_mm": 0.0233,
-  "coverage_p99_mm": 0.0088
+  "coverage_max_mm": 0.024,
+  "coverage_p99_mm": 0.0092
  },
  "close-ws": {
   "jumps": 1,
@@ -199,8 +199,8 @@
     0.0
    ]
   },
-  "coverage_max_mm": 0.0186,
-  "coverage_p99_mm": 0.0092
+  "coverage_max_mm": 0.0162,
+  "coverage_p99_mm": 0.0089
  },
  "power-ws": {
   "jumps": 0,
@@ -210,21 +210,21 @@
    "state": "Stopped",
    "why": "reboot",
    "job": 3476692858,
-   "ln": 1165,
+   "ln": 1172,
    "boot": "2",
    "alarm": "0",
    "tool": "0",
    "wcs": "G54",
    "flags": "23",
    "mpos": [
-    -294.484,
-    -274.06,
+    -296.996,
+    -275.372,
     -66.0,
     0.0,
     0.0
    ]
   },
-  "resumed_from": "N1165G1F1000.000000X4.800000Y25.708333",
+  "resumed_from": "N1172G1F1000.000000X3.004167Y16.927083",
   "resume": {
    "result": "done",
    "finished": true,
@@ -249,18 +249,19 @@
     0.0
    ]
   },
-  "coverage_max_mm": 0.0227,
-  "coverage_p99_mm": 0.0094,
+  "coverage_max_mm": 0.0111,
+  "coverage_p99_mm": 0.0089,
   "power_cut": {
    "last_position": [
-    -294.644,
-    -274.112,
+    -296.996,
+    -276.792,
     -66.0
    ],
-   "on_line": 1165,
-   "distance_mm": 0.0018,
-   "recorded_line": 1165,
-   "verdict": "exact"
+   "on_line": 1172,
+   "distance_mm": 0.0015,
+   "recorded_line": 1172,
+   "verdict": "exact",
+   "samples_off_the_program": 322
   }
  }
 }

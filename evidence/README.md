@@ -2,9 +2,16 @@
 
 31 Oct 2026, after the fix pass for technical review A. GRBLHAL-Sim branch
 `usb-stream` with this repository built in (`-DFLIGHT_RECORDER_DIR`), WSL
-(Linux), run at 4× simulated speed (power cut and `close-usb` at 6×, to stay
-under the two-minute cap per run). The simulator's clock follows real time
-only as fast as the host keeps up, so on a loaded host it runs slower.
+(Linux), run at 4× simulated speed.
+
+The whole-job runs use a simulator built with the processor clock at 1 MHz
+instead of 16 (`-DCMAKE_C_FLAGS="-UF_CPU -DF_CPU=1000000"`). The simulator
+steps the clock in software, so at 16 MHz a whole job only fits the
+two-minute cap per run when the host is otherwise idle; at 1 MHz they take
+about a minute. The timers are coarser, so it isn't timing-identical to the
+board, but the records, lines and coverage came out the same as the 16 MHz
+runs (and as technical review A's 1 MHz runs). The focused scenarios run on
+the normal 16 MHz build.
 
 ## The job
 
@@ -23,10 +30,10 @@ machine X−300 Y−300 Z−60; homed, so machine zero is the top of Z.
 |---|---|---|---|---|
 | `reference` | uninterrupted, WebSocket | Completed, line 4255 | — | — |
 | `hang-ws` | sender stops sending and reading at 40 %, WebSocket stays open | **Retracted**, timeout, line 1702 | over USB → Completed | 0.009 / 0.019 mm |
-| `hang-usb` | same over USB, port stays open, at 50 % | **Retracted**, timeout, line 2128 | over WebSocket → Completed | 0.009 / 0.021 mm |
-| `close-usb` | sender closes the USB port at 55 % | **Retracted**, usb, line 2318 | over USB → Completed | 0.009 / 0.023 mm |
-| `close-ws` | WebSocket client closes at 70 % | **Retracted**, network, line 2960 | over WebSocket → Completed | 0.009 / 0.019 mm |
-| `power-ws` | controller killed mid-cut at 30 % (power cut), restarted | **Stopped**, reboot, line 1165 | over WebSocket → Completed | 0.009 / 0.023 mm |
+| `hang-usb` | same over USB, port stays open, at 50 % | **Retracted**, timeout, line 2128 | over WebSocket → Completed | 0.009 / 0.023 mm |
+| `close-usb` | sender closes the USB port at 55 % | **Retracted**, usb, line 2318 | over USB → Completed | 0.009 / 0.024 mm |
+| `close-ws` | WebSocket client closes at 70 % | **Retracted**, network, line 2960 | over WebSocket → Completed | 0.009 / 0.016 mm |
+| `power-ws` | controller killed mid-cut at 30 % (power cut), restarted | **Stopped**, reboot, line 1172 | over WebSocket → Completed | 0.009 / 0.011 mm |
 | `dwell-ws` | `G4 P6` (6 s, longer than the 3 s timeout) with the spindle on, line-at-a-time sender | **Running** through the dwell; then the sender hangs → **Retracted**, timeout | — | — |
 
 - **Coverage** is the farthest any point of the reference toolpath inside the
@@ -36,12 +43,15 @@ machine X−300 Y−300 Z−60; homed, so machine zero is the top of Z.
   paths only: not their order, nor whether the spindle was turning (the
   focused scenarios below check those things where it matters).
 - **No invented motion:** the path is never interpolated across samples
-  farther apart than one sample can move. Each resumed run has one such
-  jump, the homing cycle (`$H`), which the simulator's step log doesn't
-  sample; both its ends are above the stock.
-- **Power cut, never ahead:** the last stepper sample before the kill lies on
-  line 1165, 0.0018 mm from it: the record named exactly the line being cut.
-  (That sample is up to 10 ms before the kill; the never-ahead argument is in
+  farther apart than one sample can move. Each run that resumes without a
+  reboot has one such jump, the homing cycle (`$H`), which the simulator's
+  step log doesn't sample; both its ends are above the stock.
+- **Power cut, never ahead:** following the step samples through the program
+  in order, the last one before the kill lies on line 1172, 0.0015 mm from
+  its path: the record named exactly the line being cut. (The pocket's later
+  passes run back over the same points, so taking the nearest line to the
+  sample instead picks a line 53 earlier and looks like the record ran ahead.
+  That sample is up to 10 ms before the kill; the never-ahead argument is in
   the core patch, not in this sample.) At the next boot the log shows
   `SPINDLE_OFF|after=job`.
 - **A lost link drops unread input:** the USB sender had sent up to line
@@ -119,5 +129,6 @@ has the numbers.
 - The resume streamer re-enters at the job's feed (F1000); a real sender may
   want the program's plunge feed.
 
-Reproduce: `tools/evidence.py <scenario> ...` and `tools/focused.py <scenario>
-...` (see their docstrings), then `tools/analyse.py`.
+Reproduce: `tools/evidence.py <scenario> ...` on the 1 MHz simulator build and
+`tools/focused.py <scenario> ...` on the normal one (see their docstrings),
+then `tools/analyse.py`.

@@ -9,7 +9,8 @@ Each interrupted run is compared with the uninterrupted reference:
   - jumps, samples further apart than one sample interval allows. The path is
     not interpolated across them, and there shouldn't be any.
   - for a power cut, where the machine really was when the power went (the last
-    stepper sample) compared with the line the record names. On that line is
+    stepper sample) compared with the line the record names. The samples are
+    followed through the program in order to find that line. On that line is
     exact, on a later line means the record lagged behind, and an earlier line
     would mean it ran ahead, which must never happen.
   - a plot of machine Z over time around the interruption.
@@ -141,13 +142,26 @@ def distance_to_path(point, path):
     return best
 
 
-def line_at(point, segments, near_line, window=60):
-    """Which program line the machine point is on, looking around the recorded line."""
-    index = next(i for i, (number, _) in enumerate(segments) if number >= near_line)
-    candidates = []
-    for i in range(max(0, index - window), min(len(segments), index + window)):
-        candidates.append((distance_to_path(point, segments[i][1]), segments[i][0]))
-    return min(candidates)
+def follow_program(samples, segments, tolerance=0.02, look_ahead=40):
+    """Walk the samples through the program in order and return the index of the segment
+    the last one is on, and how many samples were off the program.
+
+    Going in order matters on a pocket, where later passes run back over the same points:
+    the nearest line to a point can be a pass the machine hadn't reached yet. Samples off
+    the program (homing, the moves to the start) are skipped.
+    """
+    index = 0
+    skipped = 0
+    for point in samples:
+        if distance_to_path(point, segments[index][1]) <= tolerance:
+            continue
+        for step in range(1, look_ahead + 1):
+            if index + step < len(segments) and distance_to_path(point, segments[index + step][1]) <= tolerance:
+                index += step
+                break
+        else:
+            skipped += 1
+    return index, skipped
 
 
 def main():
@@ -183,13 +197,16 @@ def main():
         if summary["scenario"] == "power" and len(run_boots[0]):
             last = run_boots[0][-1]
             recorded = summary["record_before_resume"]["ln"]
-            distance, line = line_at(last[1:4], segments, recorded)
+            index, skipped = follow_program(run_boots[0][:, 1:4], segments)
+            line = segments[index][0]
+            distance = distance_to_path(last[1:4], segments[index][1])
             if line == recorded:
                 verdict = "exact"
             else:
                 verdict = "lagged" if line > recorded else "AHEAD"
             result["power_cut"] = {"last_position": [round(value, 3) for value in last[1:4]], "on_line": line,
-                                   "distance_mm": round(distance, 4), "recorded_line": recorded, "verdict": verdict}
+                                   "distance_mm": round(distance, 4), "recorded_line": recorded, "verdict": verdict,
+                                   "samples_off_the_program": skipped}
         report[name] = result
 
         # Machine Z over time, with the boots one after the other.
