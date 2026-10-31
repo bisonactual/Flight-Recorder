@@ -14,10 +14,19 @@
 
 #define FR_FILE "FLIGHT.DAT"
 
-// A simulated processor has no reset cause.
+// A simulated processor has no reset cause and no watchdog.
 uint8_t fr_reset_cause (void)
 {
     return 0;
+}
+
+void fr_watchdog_start (uint32_t seconds)
+{
+    (void)seconds;
+}
+
+void fr_watchdog_feed (void)
+{
 }
 
 static FILE *file = NULL;

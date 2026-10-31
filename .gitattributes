@@ -8,5 +8,6 @@
 *.md    text eol=lf
 *.nc    text eol=lf
 *.lock  text eol=lf
+*.ini   text eol=lf
 *.png   binary
 *.uf2   binary

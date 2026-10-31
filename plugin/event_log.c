@@ -15,6 +15,8 @@
     MODBUS   Modbus timeouts, CRC errors, exceptions and retries, per second
     JOB      job start, stop, retract and end
     STORAGE  storage writes that failed (logged once they work again)
+    SPINDLE_OFF  the spindle stop at boot, after an unexpected reset (a job
+             was running, a watchdog reset or a brown-out)
 
   Inputs and limits arrive in interrupts: the interrupt only latches them, and
   the realtime poll writes them. The same event again within a second of the
@@ -132,7 +134,29 @@ static void slot_write (uint16_t slot, fr_event_t *e)
 static bool slot_read (uint16_t slot, fr_event_t *e)
 {
     return fr_storage_read(LOG_ENTRIES + slot * sizeof(fr_event_t), e, sizeof(fr_event_t)) &&
-            e->type != 0 && e->check == crc8((const uint8_t *)e, offsetof(fr_event_t, check));
+            e->type >= FR_Event_Boot && e->type <= FR_Event_SpindleOff &&
+             e->check == crc8((const uint8_t *)e, offsetof(fr_event_t, check));
+}
+
+// A torn or unreadable header: rebuild it from the events, which carry their own
+// order. Reads the whole ring once (about half a second on the A7).
+static void header_rebuild (void)
+{
+    fr_event_t e;
+    bool any = false;
+
+    memset(&hdr, 0, sizeof(log_header_t));
+
+    for(uint16_t slot = 0; slot < FR_LOG_EVENTS; slot++) {
+        if(slot_read(slot, &e)) {
+            hdr.count++;
+            if(!any || (int16_t)(e.index - hdr.next_index) >= 0) {
+                hdr.next_index = e.index + 1;
+                hdr.head = (slot + 1) % FR_LOG_EVENTS;
+                any = true;
+            }
+        }
+    }
 }
 
 static void flush_last (void)
@@ -274,10 +298,10 @@ static void modbus_poll (uint32_t now)
     prev = *s;
 
     if(timeouts | crc | exceptions | retries)
-        fr_log_event(FR_Event_Modbus, 0, add_saturating(0, (timeouts > 0xFF ? 0xFF : timeouts) |
-                                                             (crc > 0xFF ? 0xFF : crc) << 8 |
-                                                              (exceptions > 0xFF ? 0xFF : exceptions) << 16 |
-                                                               (retries > 0xFF ? 0xFF : retries) << 24));
+        fr_log_event(FR_Event_Modbus, 0, (timeouts > 0xFF ? 0xFF : timeouts) |
+                                          (crc > 0xFF ? 0xFF : crc) << 8 |
+                                           (exceptions > 0xFF ? 0xFF : exceptions) << 16 |
+                                            (retries > 0xFF ? 0xFF : retries) << 24);
 }
 
 #endif
@@ -396,6 +420,12 @@ static void describe (const fr_event_t *e, char *buf, size_t size)
             snprintf(buf, size, "STORAGE|failed_writes=%lu", (unsigned long)e->data);
             break;
 
+        case FR_Event_SpindleOff: {
+            static const char *const why[] = { "job", "watchdog", "brown-out" };
+            names(a, sizeof(a), e->code, why, sizeof(why) / sizeof(why[0]));
+            snprintf(buf, size, "SPINDLE_OFF|after=%s", a);
+        }   break;
+
         default:
             snprintf(buf, size, "TYPE%u|code=%u|data=%lu", e->type, e->code, (unsigned long)e->data);
             break;
@@ -419,10 +449,10 @@ void fr_log_report (uint32_t count)
         uint16_t slot = (uint16_t)((hdr.head + FR_LOG_EVENTS - count + i) % FR_LOG_EVENTS);
         if(slot_read(slot, &e)) {
             describe(&e, text, sizeof(text));
-            snprintf(line, sizeof(line), "[FRLOG:%u|boot=%u|t=%lu.%03lu|%s|n=%u]", e.index, e.boot,
+            snprintf(line, sizeof(line), "[EVENT:%u|boot=%u|t=%lu.%03lu|%s|n=%u]", e.index, e.boot,
                       (unsigned long)(e.time / 1000), (unsigned long)(e.time % 1000), text, e.repeats + 1u);
         } else
-            snprintf(line, sizeof(line), "[FRLOG:?|unreadable slot %u]", slot);
+            snprintf(line, sizeof(line), "[EVENT:?|unreadable slot %u]", slot);
         hal.stream.write(line);
         hal.stream.write(ASCII_EOL);
     }
@@ -449,7 +479,7 @@ void fr_log_init (uint32_t boot_count, uint8_t reset_cause, uint8_t job_state)
     if(!(fr_storage_read(LOG_HEADER, &hdr, sizeof(log_header_t)) && hdr.magic == LOG_MAGIC &&
           hdr.check == crc8((const uint8_t *)&hdr, offsetof(log_header_t, check)) &&
            hdr.head < FR_LOG_EVENTS && hdr.count <= FR_LOG_EVENTS))
-        memset(&hdr, 0, sizeof(log_header_t));
+        header_rebuild();
 
     // Power cut between an event and its header: the event is there, take it.
     if(slot_read(hdr.head, &e) && e.index == hdr.next_index) {

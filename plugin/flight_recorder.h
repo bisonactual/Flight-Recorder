@@ -15,7 +15,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define FR_VERSION     "0.2.0"
+#define FR_VERSION     "0.3.0"
 #define FR_MAGIC       0x31524646u  // "FFR1": layout version 1
 #define FR_SLOT_SIZE   64u          // two copies, at 0 and FR_SLOT_SIZE
 #define FR_AXES        5

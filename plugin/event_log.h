@@ -21,8 +21,14 @@ typedef enum {
     FR_Event_Modbus,        // data: per second, timeouts | CRC errors << 8 | exceptions << 16 | retries << 24
     FR_Event_Job,           // code: record state (fr_state_t), data: line (or job id at start)
     FR_Event_Storage,       // data: storage writes that failed before this one succeeded
-    FR_Event_Dropped        // data: events lost
+    FR_Event_SpindleOff     // code: why, at boot (fr_boot_stop_t); the last (event_log.c checks the range)
 } fr_event_type_t;
+
+typedef enum {
+    FR_BootStop_Job       = 1 << 0, // a job was running when the controller went down
+    FR_BootStop_Watchdog  = 1 << 1,
+    FR_BootStop_BrownOut  = 1 << 2
+} fr_boot_stop_t;
 
 typedef enum {
     FR_Reset_PowerOn  = 1 << 0,
@@ -59,5 +65,9 @@ void fr_log_clear (void);
 
 // Board layer: why the processor last reset (fr_reset_t bits), 0 if unknown.
 uint8_t fr_reset_cause (void);
+
+// Board layer: the hardware watchdog. Once started it can only be stopped by a reset.
+void fr_watchdog_start (uint32_t seconds);
+void fr_watchdog_feed (void);
 
 #endif

@@ -9,15 +9,21 @@ stream stops. Open source (GPLv3, like grblHAL).
   (never ahead of the machine), machine position, tool, work offset, and why
   the job stopped: program end, alarm, reset, reboot, or the stream going away.
 - **Stream-loss retract:** with the spindle on, if the sender stops feeding the
-  job (timeout) or its USB port / network client closes, the board blocks
-  further input, retracts straight up to machine Z −20, stops the spindle,
-  records it and raises alarm 80.
-- **Resume:** the sender reads `$FR`, rebuilds the modal state up to the
+  job (timeout) or its link goes (USB port or network client closed, or the
+  input taken over), the board blocks all input, lets the executing line
+  finish, retracts straight up to machine Z −20, stops the spindle, records it
+  and raises alarm 80. A retract that can't finish stops the machine (alarm 81).
+- **Resume:** the sender reads `$FLIGHT`, rebuilds the modal state up to the
   recorded line, re-enters straight down onto its start and streams on.
-- **Event log:** the last 1000 events across reboots (`$FRLOG`): resets and
+- **Event log:** the last 1000 events across reboots (`$EVENTS`): resets and
   their cause (brown-out, reset pin, watchdog), alarms, error replies, inputs
   and limit switches tripping, the sender's link coming and going, and Modbus
   timeouts and CRC errors. Aimed at the "silent" faults EMI causes.
+- **Watchdog (`_FR_WD` builds):** if the controller itself hangs, the
+  hardware watchdog resets it after `$793` seconds (3–10, default 5), which
+  stops the spindle; the board waits in its homing alarm and the job can be
+  resumed. Without it a hung controller keeps the spindle turning until
+  someone presses reset.
 
 The sender side is in [docs/COMMANDS.md](docs/COMMANDS.md).
 
@@ -40,7 +46,7 @@ The sender side is in [docs/COMMANDS.md](docs/COMMANDS.md).
 plugin/                 the grblHAL plugin
   flight_recorder.c/h     record, stream-loss retract, $ commands, settings
   event_log.c/h           the event log
-  storage_fram.c          the A7's FRAM (checked at start-up) and reset cause
+  storage_fram.c          the A7's FRAM (checked at start-up), reset cause, watchdog
   storage_file.c          a host file (simulator)
   library.json            PlatformIO library (FRAM storage only)
 core/                   grblHAL core patches

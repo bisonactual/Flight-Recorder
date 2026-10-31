@@ -1,9 +1,12 @@
 """Analyse flight recorder evidence runs.
 
 For each interrupted run, against the uninterrupted reference:
-  - coverage: the farthest any point of the reference toolpath lies from the
-    path the interrupted run actually cut (all boots, retract and re-entry
-    included). Near zero means nothing was skipped;
+  - coverage: the farthest any point of the reference toolpath inside the
+    stock (below work Z 0) lies from where the interrupted run went inside the
+    stock (all boots, re-entry included). Near zero means the paths match: no
+    part of the cut was left out. It says nothing of order or spindle state;
+  - jumps: consecutive samples farther apart than one sample can move. The
+    path isn't interpolated across them, and there should be none;
   - for a power cut: where the machine really was when the power went (last
     stepper sample) against the line the record names. On that line means
     exact; on a later line means the record lagged; on an earlier line would
@@ -21,11 +24,11 @@ import sys
 import numpy as np
 from scipy.spatial import cKDTree
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from stream import load_program, WORD
 
 STEPS_PER_MM = 250.0
 G54 = np.array([-300.0, -300.0, -60.0])
+MAX_STEP = 1.5      # mm: farther than one 10 ms sample moves (6000 mm/min is 1 mm)
 
 
 def read_steps(path):
@@ -50,16 +53,27 @@ def boots(run):
 
 
 def densify(points, step=0.02):
-    """Polyline -> points every `step` mm (for nearest-distance queries)."""
+    """Polyline -> points every `step` mm (for nearest-distance queries), except across
+    a jump: interpolating there would invent motion nobody sampled."""
     out = [points[:1]]
     for a, b in zip(points[:-1], points[1:]):
-        n = int(math.ceil(np.linalg.norm(b - a) / step))
-        if n > 1:
+        d = float(np.linalg.norm(b - a))
+        n = int(math.ceil(d / step))
+        if n > 1 and d <= MAX_STEP:
             t = np.linspace(0, 1, n + 1)[1:, None]
             out.append(a + (b - a) * t)
         else:
             out.append(b[None, :])
     return np.vstack(out)
+
+
+def jumps(points):
+    return int((np.linalg.norm(np.diff(points, axis=0), axis=1) > MAX_STEP).sum()) if len(points) > 1 else 0
+
+
+def in_stock(points):
+    """Only below work Z 0 does the tool cut: rapids and retracts above it can't."""
+    return points[points[:, 2] < G54[2] - 1e-6]
 
 
 def program_segments(path):
@@ -138,17 +152,18 @@ def main():
     import matplotlib.pyplot as plt
 
     ref = np.vstack(boots(os.path.join(runs_dir, ref_name)))
-    ref_pts = densify(ref[:, 1:4])
+    ref_pts = in_stock(densify(ref[:, 1:4]))
     segs = program_segments(program)
-    report = {}
+    report = {ref_name: {"jumps": jumps(ref[:, 1:4])}}
 
     for name in names:
         run = os.path.join(runs_dir, name)
         s = json.load(open(os.path.join(run, "summary.json")))
         bs = boots(run)
-        cut = np.vstack([densify(b[:, 1:4]) for b in bs if len(b)])
+        cut = in_stock(np.vstack([densify(b[:, 1:4]) for b in bs if len(b)]))
         dist, _ = cKDTree(cut).query(ref_pts)
         r = {
+            "jumps": sum(jumps(b[:, 1:4]) for b in bs),
             "scenario": s["scenario"], "via": s["via"],
             "record": s.get("record_before_resume"),
             "resumed_from": s.get("resume_first_line", "")[:40],

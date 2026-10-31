@@ -20,13 +20,12 @@ def _die_with_parent():
 
 
 class Sim:
-    def __init__(self, binary, run_dir, ws_port=8090, step_report=0.01, speed=1.0, cpus="0-5"):
+    def __init__(self, binary, run_dir, ws_port=8090, step_report=0.01, speed=1.0):
         self.binary = binary
         self.run_dir = run_dir
         self.ws_port = ws_port
         self.step_report = step_report
         self.speed = speed
-        self.cpus = cpus
         self.proc = None
         self.boots = 0
         os.makedirs(run_dir, exist_ok=True)
@@ -42,7 +41,7 @@ class Sim:
     def start(self):
         self.boots += 1
         tag = f"boot{self.boots}"
-        cmd = ["taskset", "-c", self.cpus, self.binary,
+        cmd = [self.binary,
                "-u", os.path.join(self.run_dir, "usb"),
                "-w", str(self.ws_port),
                "-e", os.path.join(self.run_dir, "EEPROM.DAT"),

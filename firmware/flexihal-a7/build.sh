@@ -19,6 +19,12 @@ build=${FR_BUILD_DIR:-$root/firmware/build}/flexihal-a7
 driver=$build/STM32F4xx
 out=$here/out
 
+all=$(sed -n 's/^\[env:\(.*\)\]$/\1/p' "$here/platformio.local.ini")
+if [ "${1:-}" = list ]; then
+    echo "$all"
+    exit 0
+fi
+
 # 1. Expatria's driver at the pinned commit; every submodule at the commit their tree
 #    records, except rgb (see driver.lock). --force resets our patches from last time.
 if [ ! -d "$driver/.git" ]; then
@@ -50,18 +56,11 @@ rm -rf "$driver/flight_recorder"
 cp -r "$root/plugin" "$driver/flight_recorder"
 
 # 4. Our variants, in the platformio.local.ini their platformio.ini already loads.
-rm -f "$driver/platformio.local.ini"
-(cd "$driver" && pio project config --json-output) > "$build/config.json"
-python3 "$here/variants.py" "$build/config.json" > "$driver/platformio.local.ini"
-
-if [ "${1:-}" = list ]; then
-    python3 "$here/variants.py" "$build/config.json" --list
-    exit 0
-fi
+cp "$here/platformio.local.ini" "$driver/platformio.local.ini"
 
 variants=("$@")
 if [ ${#variants[@]} -eq 0 ]; then
-    mapfile -t variants < <(python3 "$here/variants.py" "$build/config.json" --list | grep -v '^#' | cut -f1)
+    mapfile -t variants <<< "$all"
 fi
 
 # 5. Build. Expatria's post-build script writes FLEXI_HAL_<variant>_<driver version>.uf2

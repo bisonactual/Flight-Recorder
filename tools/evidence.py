@@ -10,9 +10,9 @@ One scenario per invocation (each stays under two minutes):
                          sender: must NOT retract; then the sender hangs: must
   events                 provoke each kind of event-log entry (garbled lines,
                          chattering input, limit trip, e-stop, links coming and
-                         going, power cut) and read back $FRLOG
+                         going, power cut) and read back $EVENTS
 
-Interrupted scenarios then reconnect (over --resume-via), read $FR, home and
+Interrupted scenarios then reconnect (over --resume-via), read $FLIGHT, home and
 resume the job from the record. Output: <run>/summary.json, sender logs, and
 the simulator's step logs (machine position in steps, one file per boot).
 """
@@ -20,14 +20,11 @@ the simulator's step logs (machine position in steps, one file per boot).
 import argparse
 import json
 import os
-import sys
 import time
-
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from link import open_link
 from simrun import Sim
-from stream import Streamer, load_program, numbered, query_fr, modal_scan, resume_preamble, resume_lines
+from stream import Streamer, load_program, numbered, query_flight, modal_scan, resume_preamble, resume_lines
 
 G54 = (-300.0, -300.0, -60.0)   # work zero in machine coordinates
 
@@ -71,8 +68,9 @@ def wait_for(link, pred, timeout):
 def resume(sim, via, program, out, log):
     link = open_link(sim.usb if via == "usb" else sim.ws)
     link.lines_until(lambda l: False, 0.5)
-    record = query_fr(link)
+    record = query_flight(link)
     out["record_before_resume"] = record
+    out["log_before_resume"] = link.command("$EVENTS=3", timeout=5)
     job, lines = load_program(program)
     if record is None or record["job"] != job:
         out["resume"] = "refused: job mismatch"
@@ -89,7 +87,7 @@ def resume(sim, via, program, out, log):
     finished = streamer.drain(timeout=100)
     out["resume"] = {"result": result, "finished": finished, "errors": streamer.errors,
                      "alarms": streamer.alarms}
-    out["record_after_resume"] = query_fr(link)
+    out["record_after_resume"] = query_flight(link)
     return link
 
 
@@ -130,15 +128,15 @@ def main():
         stop = None
         if cut_index is not None:
             action = "close" if args.scenario == "close" else "hang"
-            stop = lambda i, t: action if i >= cut_index + 1 else None   # +1: after the $FRJ line
-        result, index = streamer.send_lines([f"$FRJ={job:08X}"] + numbered(lines), stop)
+            stop = lambda i, t: action if i >= cut_index + 1 else None   # +1: after the $FLIGHT=<job> line
+        result, index = streamer.send_lines([f"$FLIGHT={job:08X}"] + numbered(lines), stop)
         out["stream_result"] = result
         out["lines_sent"] = index - 1
         out["last_line_sent"] = lines[index - 2][0] if index >= 2 else None
 
         if args.scenario == "reference":
             out["finished"] = streamer.drain(timeout=100)
-            out["record"] = query_fr(link)
+            out["record"] = query_flight(link)
             return
 
         if args.scenario == "power":
@@ -167,11 +165,11 @@ def run_dwell(link, sim, out, log):
     job = 0xD3E11
     replies = {}
     t0 = time.monotonic()
-    for line in [f"$FRJ={job:08X}", "N1G21G90G54", "N2G0X10Y10Z5", "N3S12000M3", "N4G1Z-1F300",
+    for line in [f"$FLIGHT={job:08X}", "N1G21G90G54", "N2G0X10Y10Z5", "N3S12000M3", "N4G1Z-1F300",
                  "N5G4P6", "N6G1X20F1000"]:
         replies[line] = (round(time.monotonic() - t0, 2), link.command(line, timeout=40))
     out["dwell_replies"] = replies
-    out["record_after_dwell"] = query_fr(link)
+    out["record_after_dwell"] = query_flight(link)
     out["status_after_dwell"] = wait_for(link, lambda l: l.startswith("<"), 2)
     # Now the sender hangs with the spindle on: this must retract.
     time.sleep(6)
@@ -179,15 +177,15 @@ def run_dwell(link, sim, out, log):
     time.sleep(1)
     link2 = open_link(sim.usb if out["via"] == "ws" else sim.ws)
     link2.lines_until(lambda l: False, 0.5)
-    out["record_after_hang"] = query_fr(link2)
-    out["frlog"] = link2.command("$FRLOG=12", timeout=5)
+    out["record_after_hang"] = query_flight(link2)
+    out["frlog"] = link2.command("$EVENTS=12", timeout=5)
     link2.close()
 
 
 def run_events(link, sim, out):
     """Each kind of event-log entry, then the log read back after a power cut."""
     steps = {}
-    steps["clear"] = link.command("$FRLOGC")
+    steps["clear"] = link.command("$EVENTSCLEAR")
     # Garbled lines, as noise on the sender link would make them: three of one kind, one of another.
     steps["garbled"] = [link.command(l) for l in ("G1X1Y", "G1X1Y", "G1X1Y", "Q123")]
     # A limit switch tripping with hard limits on, then the reset to clear it.
@@ -220,7 +218,7 @@ def run_events(link, sim, out):
     link = open_link(sim.usb)
     link.lines_until(lambda l: False, 0.5)
     out["steps"] = steps
-    out["frlog"] = link.command("$FRLOG=50", timeout=5)
+    out["frlog"] = link.command("$EVENTS=50", timeout=5)
     link.close()
 
 

@@ -1,5 +1,9 @@
 {
+ "reference": {
+  "jumps": 0
+ },
  "hang-ws": {
+  "jumps": 1,
   "scenario": "hang",
   "via": "ws",
   "record": {
@@ -49,6 +53,7 @@
   "coverage_p99_mm": 0.0094
  },
  "hang-usb": {
+  "jumps": 1,
   "scenario": "hang",
   "via": "usb",
   "record": {
@@ -94,31 +99,32 @@
     0.0
    ]
   },
-  "coverage_max_mm": 0.0224,
-  "coverage_p99_mm": 0.0094
+  "coverage_max_mm": 0.0213,
+  "coverage_p99_mm": 0.0092
  },
  "close-usb": {
+  "jumps": 1,
   "scenario": "close",
   "via": "usb",
   "record": {
    "state": "Retracted",
    "why": "usb",
    "job": 3476692858,
-   "ln": 2341,
+   "ln": 2318,
    "boot": "1",
    "alarm": "0",
    "tool": "0",
    "wcs": "G54",
    "flags": "13",
    "mpos": [
-    -295.268,
-    -253.144,
+    -296.3,
+    -253.24,
     -66.0,
     0.0,
     0.0
    ]
   },
-  "resumed_from": "N2341G1F1000.000000X4.731250Y46.856250",
+  "resumed_from": "N2318G1F1000.000000X3.700000Y46.760417",
   "resume": {
    "result": "done",
    "finished": true,
@@ -143,10 +149,11 @@
     0.0
    ]
   },
-  "coverage_max_mm": 0.0167,
-  "coverage_p99_mm": 0.0087
+  "coverage_max_mm": 0.0233,
+  "coverage_p99_mm": 0.0088
  },
  "close-ws": {
+  "jumps": 1,
   "scenario": "close",
   "via": "ws",
   "record": {
@@ -192,10 +199,11 @@
     0.0
    ]
   },
-  "coverage_max_mm": 0.0195,
-  "coverage_p99_mm": 0.0089
+  "coverage_max_mm": 0.0186,
+  "coverage_p99_mm": 0.0092
  },
  "power-ws": {
+  "jumps": 0,
   "scenario": "power",
   "via": "ws",
   "record": {
@@ -241,16 +249,16 @@
     0.0
    ]
   },
-  "coverage_max_mm": 0.0215,
-  "coverage_p99_mm": 0.0087,
+  "coverage_max_mm": 0.0227,
+  "coverage_p99_mm": 0.0094,
   "power_cut": {
    "last_position": [
-    -294.976,
-    -274.22,
+    -294.644,
+    -274.112,
     -66.0
    ],
    "on_line": 1165,
-   "distance_mm": 0.0014,
+   "distance_mm": 0.0018,
    "recorded_line": 1165,
    "verdict": "exact"
   }
