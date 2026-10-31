@@ -1,9 +1,9 @@
-"""Sender-side link to grblHAL over USB serial or WebSocket.
+"""The sender's link to grblHAL, over USB serial or a WebSocket.
 
     usb:/tmp/flexihal-usb      serial device (pyserial)
-    ws://localhost:8080        WebSocket (minimal RFC 6455 client, stdlib only)
+    ws://localhost:8080        WebSocket (a minimal RFC 6455 client, standard library only)
 
-Both give the same small interface: send(bytes), readline(timeout), close().
+Both have the same small interface: send(bytes), readline(timeout) and close().
 """
 
 import base64
@@ -30,38 +30,38 @@ class Link:
         """Next line without its line ending, or None on timeout."""
         deadline = time.monotonic() + timeout
         while True:
-            for sep in (b"\n", b"\r"):
-                i = self._buf.find(sep)
-                if i >= 0:
-                    line, self._buf = self._buf[:i], self._buf[i + 1:]
+            for separator in (b"\n", b"\r"):
+                end = self._buf.find(separator)
+                if end >= 0:
+                    line, self._buf = self._buf[:end], self._buf[end + 1:]
                     line = line.strip(b"\r\n")
                     if line:
                         return line.decode("ascii", "replace")
                     break
             else:
-                left = deadline - time.monotonic()
-                if left <= 0:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
                     return None
-                self._buf += self._recv(min(left, 0.05))
+                self._buf += self._recv(min(remaining, 0.05))
                 continue
 
     def lines_until(self, done, timeout):
-        """Read lines until done(line) is true; returns all lines read."""
-        got = []
+        """Read lines until done(line) is true, and return all the lines read."""
+        lines = []
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             line = self.readline(deadline - time.monotonic())
             if line is None:
                 break
-            got.append(line)
+            lines.append(line)
             if done(line):
                 break
-        return got
+        return lines
 
     def command(self, line, timeout=2.0):
-        """Send one line and return the replies up to and including ok/error."""
+        """Send one line and return the replies, up to and including the ok or error."""
         self.send((line + "\n").encode("ascii"))
-        return self.lines_until(lambda l: l == "ok" or l.startswith("error"), timeout)
+        return self.lines_until(lambda reply: reply == "ok" or reply.startswith("error"), timeout)
 
 
 class SerialLink(Link):
@@ -72,7 +72,7 @@ class SerialLink(Link):
         try:
             self.port.dtr = True
         except OSError:
-            pass  # pseudo-terminal: no modem lines; having it open is the "DTR"
+            pass  # a pseudo-terminal has no modem lines, so having it open counts as DTR
 
     def _recv(self, timeout):
         end = time.monotonic() + timeout
@@ -120,36 +120,37 @@ class WebSocketLink(Link):
             self._raw += chunk
         except socket.timeout:
             pass
-        out = b""
+        # Unwrap every complete frame received so far and keep the text and binary payloads.
+        data = b""
         while len(self._raw) >= 2:
-            b1, b2 = self._raw[0], self._raw[1]
-            n, off = b2 & 0x7F, 2
-            if n == 126:
+            opcode, length, start = self._raw[0] & 0x0F, self._raw[1] & 0x7F, 2
+            if length == 126:
                 if len(self._raw) < 4:
                     break
-                n, off = struct.unpack(">H", self._raw[2:4])[0], 4
-            elif n == 127:
+                length, start = struct.unpack(">H", self._raw[2:4])[0], 4
+            elif length == 127:
                 if len(self._raw) < 10:
                     break
-                n, off = struct.unpack(">Q", self._raw[2:10])[0], 10
-            if len(self._raw) < off + n:
+                length, start = struct.unpack(">Q", self._raw[2:10])[0], 10
+            if len(self._raw) < start + length:
                 break
-            payload, self._raw = self._raw[off:off + n], self._raw[off + n:]
-            if b1 & 0x0F in (0x1, 0x2):
-                out += payload
-        return out
+            payload, self._raw = self._raw[start:start + length], self._raw[start + length:]
+            if opcode in (0x1, 0x2):
+                data += payload
+        return data
 
     def send(self, data):
+        # Client frames have to be masked.
         mask = os.urandom(4)
-        n = len(data)
-        if n < 126:
-            head = struct.pack("BB", 0x81, 0x80 | n)
-        elif n < 65536:
-            head = struct.pack(">BBH", 0x81, 0x80 | 126, n)
+        length = len(data)
+        if length < 126:
+            header = struct.pack("BB", 0x81, 0x80 | length)
+        elif length < 65536:
+            header = struct.pack(">BBH", 0x81, 0x80 | 126, length)
         else:
-            head = struct.pack(">BBQ", 0x81, 0x80 | 127, n)
-        body = bytes(b ^ mask[i % 4] for i, b in enumerate(data))
-        self.sock.sendall(head + mask + body)
+            header = struct.pack(">BBQ", 0x81, 0x80 | 127, length)
+        body = bytes(byte ^ mask[i % 4] for i, byte in enumerate(data))
+        self.sock.sendall(header + mask + body)
 
     def close(self):
         try:

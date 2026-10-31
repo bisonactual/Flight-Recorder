@@ -1,31 +1,32 @@
-"""Focused flight recorder scenarios in the simulator, each with its own check.
+"""Short flight recorder scenarios in the simulator, each with its own checks.
 
-Technical review A's falsifiers (31 Oct 2026), kept as evidence. Every
-scenario stamps a job, sets up a short numbered start (N1-N3: G54, a move to
-X10 Y10 Z-1, spindle on) over WebSocket, then:
+These are the falsifiers from technical review A (31 Oct 2026), kept as
+evidence. Each scenario stamps a job and starts it over WebSocket with three
+numbered lines (G54, a move to X10 Y10 Z-1, spindle on), then:
 
-  dwell-descend   N4 G4P6 G1Z0 (dwell, then a plunge); the client closes during
-                  the dwell -> the plunge runs, then the retract: Z ends at -20
-  numbered-jog    a jog with N900 -> the record keeps line 2
-  partial-line    half a line sent, then the timeout -> the first query after
-                  the retract is answered (the half line was dropped)
-  resume-power    retract, then a resume whose re-entry is cut by a power cut
-                  -> the record keeps the line from before the resume
-  reconnect       client closes and a new one connects 50 ms later, sending
-                  N5 -> N5 never runs (X stays at N4's target)
-  reset-control   reset during a numbered move -> why=reset
-  estop-retract   e-stop during the retract -> Stopped, not Retracted
-  reset-retract   reset during the retract -> Stopped, spindle off
-  g20, g91        the job in inches / incremental -> retract to machine Z -20
-  check           check mode -> no retract
-  m0              program pause past the timeout -> no retract; cycle start
-                  carries the job on (N5 recorded)
-  hold-retract    feed hold during the retract until it gives up -> alarm 81,
+  dwell-descend   N4 G4P6 G1Z0 (a dwell, then a plunge), and the client closes
+                  during the dwell. The plunge runs, then the retract, and Z
+                  ends up at -20.
+  numbered-jog    a jog with N900. The record stays on line 2.
+  partial-line    half a line, then the timeout. The first query after the
+                  retract gets an answer because the half line was dropped.
+  resume-power    a retract, then a resume that loses power while it moves back
+                  in. The record keeps the line from before the resume.
+  reconnect       the client closes and a new one connects 50 ms later and
+                  sends N5. N5 never runs, X stays at N4's target.
+  reset-control   a reset during a numbered move. Recorded as why=reset.
+  estop-retract   an e-stop during the retract. Stopped, not Retracted.
+  reset-retract   a reset during the retract. Stopped, spindle off.
+  g20, g91        the job in inches, or incremental. Retracts to machine Z -20.
+  check           check mode. No retract.
+  m0              a program pause longer than the timeout. No retract, and
+                  cycle start carries the job on (N5 gets recorded).
+  hold-retract    a feed hold during the retract until it gives up. Alarm 81,
                   Stopped. Needs a simulator built with a short limit
-                  (-DFR_RETRACT_LIMIT=15000u)
+                  (-DFR_RETRACT_LIMIT=15000u).
 
-Usage: focused.py <scenario> --sim <binary> --run <dir>. Prints the result
-and its checks as JSON; exits 1 if a check fails.
+Usage: focused.py <scenario> --sim <binary> --run <dir>. Prints the checks as
+JSON and exits with 1 if any of them failed.
 """
 
 import argparse
@@ -34,7 +35,7 @@ import re
 import sys
 import time
 
-from evidence import setup_machine, wait_for
+from evidence import setup_machine, wait_for, skip_greeting
 from link import open_link
 from simrun import Sim
 from stream import parse_flight
@@ -42,189 +43,207 @@ from stream import parse_flight
 SCENARIOS = ["dwell-descend", "numbered-jog", "partial-line", "resume-power", "reconnect", "reset-control",
              "estop-retract", "reset-retract", "g20", "g91", "check", "m0", "hold-retract"]
 
-
-def status_of(report):
-    """'<Alarm|MPos:x,y,z,...|...>' -> (state, [x, y, z])."""
-    m = re.match(r"<(\w+)[^|]*\|MPos:([-\d.]+),([-\d.]+),([-\d.]+)", report or "")
-    return (m.group(1), [float(v) for v in m.group(2, 3, 4)]) if m else (None, None)
+WORK_X50 = -250.0       # machine X of work X50, where N4 goes in the reconnect scenario
 
 
-def wait_status(link, ok, timeout=40):
-    """Poll the status report until ok(state, pos) or the timeout: the simulator's
-    clock runs slower than real time on a loaded host, so no fixed sleeps."""
+def is_status(line):
+    return line.startswith("<")
+
+
+def parse_status(report):
+    """Turn '<Alarm|MPos:x,y,z,...|...>' into (state, [x, y, z])."""
+    match = re.match(r"<(\w+)[^|]*\|MPos:([-\d.]+),([-\d.]+),([-\d.]+)", report or "")
+    if not match:
+        return None, None
+    return match.group(1), [float(value) for value in match.group(2, 3, 4)]
+
+
+def wait_until(link, condition, timeout=40):
+    """Poll the status until condition(state, position) holds or the timeout runs out.
+
+    The simulator's clock runs slower than real time on a busy host, so fixed sleeps
+    aren't reliable here.
+    """
     deadline = time.monotonic() + timeout
     while True:
-        state, pos = status_of(wait_for(link, lambda l: l.startswith("<"), 2))
-        if (state and ok(state, pos)) or time.monotonic() > deadline:
-            return state, pos
+        state, position = parse_status(wait_for(link, is_status, 2))
+        if (state and condition(state, position)) or time.monotonic() > deadline:
+            return state, position
         time.sleep(0.2)
 
 
-def alarm(state, pos):
+def in_alarm(state, position):
     return state == "Alarm"
 
 
-def rising(state, pos):
-    return pos[2] > -60.9       # the retract under way (cut depth is machine Z -61)
+def retract_started(state, position):
+    return position[2] > -60.9      # the cut depth is machine Z -61
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("scenario", choices=SCENARIOS)
-    ap.add_argument("--sim", required=True)
-    ap.add_argument("--run", required=True)
-    args = ap.parse_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("scenario", choices=SCENARIOS)
+    parser.add_argument("--sim", required=True)
+    parser.add_argument("--run", required=True)
+    args = parser.parse_args()
 
-    sc = args.scenario
-    out = {"scenario": sc, "commands": []}
+    scenario = args.scenario
+    job = f"{0xAA00 + SCENARIOS.index(scenario):08X}"
+    result = {"scenario": scenario, "commands": []}
     checks = {}
     sim = Sim(args.sim, args.run, speed=4).start()
     link = None
 
-    def cmd(text, timeout=10):
+    def send(text, timeout=10):
         reply = link.command(text, timeout=timeout)
-        out["commands"].append([text, reply])
+        result["commands"].append([text, reply])
         return reply
 
-    def look(label, wait=0.0):
+    def read_record(label, wait=0.0):
         if wait:
             time.sleep(wait)
         replies = link.command("$FLIGHT")
-        record = next((parse_flight(l) for l in replies if l.startswith("[FLIGHT:")), None)
-        status = wait_for(link, lambda l: l.startswith("<"), 2)
-        out[label] = {"record": record, "replies": replies, "status": status}
-        return record, status_of(status)
+        record = next((parse_flight(line) for line in replies if line.startswith("[FLIGHT:")), None)
+        status = wait_for(link, is_status, 2)
+        result[label] = {"record": record, "replies": replies, "status": status}
+        return record, parse_status(status)
 
     try:
         link = open_link(sim.ws)
-        link.lines_until(lambda l: False, 0.4)
-        out["setup"] = setup_machine(link)
-        cmd(f"$FLIGHT={0xAA00 + SCENARIOS.index(sc):08X}")
-        if sc == "check":
-            cmd("$C")
-        if sc in ("g20", "g91", "check", "m0", "partial-line", "resume-power"):
-            cmd("$791=0.5")
+        skip_greeting(link, 0.4)
+        result["setup"] = setup_machine(link)
+        send(f"$FLIGHT={job}")
+        if scenario == "check":
+            send("$C")
+        if scenario in ("g20", "g91", "check", "m0", "partial-line", "resume-power"):
+            send("$791=0.5")
         for line in ("N1G21G90G54", "N2G0X10Y10Z-1", "N3S12000M3"):
-            cmd(line)
+            send(line)
 
-        if sc == "dwell-descend":
-            cmd("G53G0Z-10")
+        if scenario == "dwell-descend":
+            send("G53G0Z-10")
             link.send(b"N4G4P6G1Z0F3000\n")
             time.sleep(1)
             link.close()
             link = open_link(sim.usb)
-            link.lines_until(lambda l: False, 0.3)
-            wait_status(link, alarm, 60)
-            rec, (state, pos) = look("after")
-            checks["retracted"] = bool(rec) and rec["state"] == "Retracted"
-            checks["at machine Z -20"] = bool(pos) and abs(pos[2] + 20.0) < 0.01
+            skip_greeting(link, 0.3)
+            wait_until(link, in_alarm, 60)
+            record, (state, position) = read_record("after")
+            checks["retracted"] = bool(record) and record["state"] == "Retracted"
+            checks["at machine Z -20"] = bool(position) and abs(position[2] + 20.0) < 0.01
 
-        elif sc == "numbered-jog":
-            cmd("M5")
-            cmd("$J=G91G21X1F600N900")
-            rec, _ = look("after", 0.5)
-            checks["line still 2"] = bool(rec) and rec["ln"] == 2
+        elif scenario == "numbered-jog":
+            send("M5")
+            send("$J=G91G21X1F600N900")
+            record, _ = read_record("after", 0.5)
+            checks["line still 2"] = bool(record) and record["ln"] == 2
 
-        elif sc == "partial-line":
+        elif scenario == "partial-line":
             link.send(b"N50G1X")
-            wait_status(link, alarm)
-            rec, _ = look("after")
-            checks["first query answered"] = rec is not None
-            checks["retracted"] = bool(rec) and rec["state"] == "Retracted"
+            wait_until(link, in_alarm)
+            record, _ = read_record("after")
+            checks["first query answered"] = record is not None
+            checks["retracted"] = bool(record) and record["state"] == "Retracted"
 
-        elif sc == "resume-power":
-            wait_status(link, alarm)
-            first, _ = look("before")
-            cmd("$X")
-            cmd("$H")
-            cmd(f"$FLIGHT={0xAA00 + SCENARIOS.index(sc):08X}")
+        elif scenario == "resume-power":
+            wait_until(link, in_alarm)
+            before, _ = read_record("before")
+            send("$X")
+            send("$H")
+            send(f"$FLIGHT={job}")
             for line in ("G21G90G54", "G53G0Z-20", "G0X10Y10", "S12000M3"):
-                cmd(line)
+                send(line)
             link.send(b"G1Z-1F60\n")
             time.sleep(0.4)
             sim.kill()
             link.close()
             sim.start()
             link = open_link(sim.usb)
-            link.lines_until(lambda l: False, 0.3)
-            rec, _ = look("after")
-            checks["line kept"] = bool(first and rec) and rec["ln"] == first["ln"] != 0
-            checks["stopped, reboot"] = bool(rec) and (rec["state"], rec["why"]) == ("Stopped", "reboot")
+            skip_greeting(link, 0.3)
+            record, _ = read_record("after")
+            checks["line kept"] = bool(before and record) and record["ln"] == before["ln"] != 0
+            checks["stopped, reboot"] = bool(record) and (record["state"], record["why"]) == ("Stopped", "reboot")
 
-        elif sc == "reconnect":
-            cmd("N4G1X50F400")
+        elif scenario == "reconnect":
+            send("N4G1X50F400")
             link.close()
             time.sleep(0.05)
             link = open_link(sim.ws)
-            link.lines_until(lambda l: False, 0.3)
-            cmd("N5G1X60F400")
-            wait_status(link, alarm)
-            rec, (state, pos) = look("after")
-            checks["N5 never ran"] = bool(pos) and abs(pos[0] - (-250.0)) < 0.01
-            checks["retracted, network"] = bool(rec) and (rec["state"], rec["why"]) == ("Retracted", "network")
+            skip_greeting(link, 0.3)
+            send("N5G1X60F400")
+            wait_until(link, in_alarm)
+            record, (state, position) = read_record("after")
+            checks["N5 never ran"] = bool(position) and abs(position[0] - WORK_X50) < 0.01
+            checks["retracted, network"] = bool(record) and (record["state"], record["why"]) == ("Retracted", "network")
 
-        elif sc == "reset-control":
-            cmd("$790=0")
-            cmd("$791=60")
-            cmd("N4G1X50F60")
+        elif scenario == "reset-control":
+            send("$790=0")
+            send("$791=60")
+            send("N4G1X50F60")
             time.sleep(0.4)
             link.send(b"\x18")
             time.sleep(0.4)
-            rec, _ = look("after", 1)
-            checks["why=reset"] = bool(rec) and (rec["state"], rec["why"]) == ("Stopped", "reset")
+            record, _ = read_record("after", 1)
+            checks["why=reset"] = bool(record) and (record["state"], record["why"]) == ("Stopped", "reset")
 
-        elif sc in ("estop-retract", "reset-retract"):
-            cmd("$112=60")
-            cmd("$791=0.5")
-            wait_status(link, rising)
-            if sc == "estop-retract":
+        elif scenario in ("estop-retract", "reset-retract"):
+            send("$112=60")
+            send("$791=0.5")
+            wait_until(link, retract_started)
+            if scenario == "estop-retract":
                 sim.key("e")
             else:
                 link.send(b"\x18")
             time.sleep(0.4)
-            rec, _ = look("after", 1)
-            checks["stopped, not retracted"] = bool(rec) and rec["state"] == "Stopped"
-            checks["spindle off"] = "A:S" not in (out["after"]["status"] or "")
+            record, _ = read_record("after", 1)
+            checks["stopped, not retracted"] = bool(record) and record["state"] == "Stopped"
+            checks["spindle off"] = "A:S" not in (result["after"]["status"] or "")
 
-        elif sc in ("g20", "g91"):
-            cmd("N4" + sc.upper())
-            wait_status(link, alarm)
-            rec, (state, pos) = look("after")
-            checks["retracted"] = bool(rec) and rec["state"] == "Retracted"
-            checks["at machine Z -20"] = bool(pos) and abs(pos[2] + 20.0) < 0.01
+        elif scenario in ("g20", "g91"):
+            send("N4" + scenario.upper())
+            wait_until(link, in_alarm)
+            record, (state, position) = read_record("after")
+            checks["retracted"] = bool(record) and record["state"] == "Retracted"
+            checks["at machine Z -20"] = bool(position) and abs(position[2] + 20.0) < 0.01
 
-        elif sc == "check":
-            cmd("N4M30")
-            rec, (state, _) = look("after", 4)
-            checks["no retract"] = state == "Check" and bool(rec) and rec["state"] == "Running"
+        elif scenario == "check":
+            send("N4M30")
+            record, (state, _) = read_record("after", 4)
+            checks["no retract"] = state == "Check" and bool(record) and record["state"] == "Running"
 
-        elif sc == "m0":
-            cmd("N4M0")
+        elif scenario == "m0":
+            send("N4M0")
             time.sleep(4)
-            state, _ = status_of(wait_for(link, lambda l: l.startswith("<"), 2))
+            state, _ = parse_status(wait_for(link, is_status, 2))
             checks["held, no retract"] = state == "Hold"
             link.send(b"~")
-            link.lines_until(lambda l: l == "ok", 3)     # N4's, held back by the pause
-            cmd("N5G1X20F500")
-            rec, _ = look("after", 1)
-            checks["went on to N5"] = bool(rec) and rec["ln"] == 5
+            link.lines_until(lambda line: line == "ok", 3)     # the ok for N4, held back by the pause
+            send("N5G1X20F500")
+            record, _ = read_record("after", 1)
+            checks["went on to N5"] = bool(record) and record["ln"] == 5
 
-        elif sc == "hold-retract":
-            cmd("$112=60")
-            cmd("$791=0.5")
-            wait_status(link, rising)
+        elif scenario == "hold-retract":
+            send("$112=60")
+            send("$791=0.5")
+            wait_until(link, retract_started)
             link.send(b"!")
-            seen = []
-            t0 = time.monotonic()
-            while time.monotonic() - t0 < 60:
-                s = wait_for(link, lambda l: l.startswith("<") or seen.append(l), 2)  # keeps the rest
-                if s and s.startswith("<Alarm"):
+            messages = []
+
+            def keep_messages(line):
+                if not is_status(line):
+                    messages.append(line)
+                return is_status(line)
+
+            started = time.monotonic()
+            while time.monotonic() - started < 60:
+                status = wait_for(link, keep_messages, 2)
+                if status and status.startswith("<Alarm"):
                     break
                 time.sleep(1)
-            out["messages"] = seen
-            rec, _ = look("after")
-            checks["alarm 81"] = "ALARM:81" in seen
-            checks["stopped"] = bool(rec) and rec["state"] == "Stopped"
+            result["messages"] = messages
+            record, _ = read_record("after")
+            checks["alarm 81"] = "ALARM:81" in messages
+            checks["stopped"] = bool(record) and record["state"] == "Stopped"
     finally:
         if link:
             try:
@@ -232,13 +251,13 @@ def main():
             except Exception:
                 pass
         sim.stop()
-        out["checks"] = checks
-        out["passed"] = bool(checks) and all(checks.values())
+        result["checks"] = checks
+        result["passed"] = bool(checks) and all(checks.values())
         with open(f"{args.run}/result.json", "w") as f:
-            json.dump(out, f, indent=1)
-        print(json.dumps({"scenario": sc, "checks": checks, "passed": out["passed"]}))
+            json.dump(result, f, indent=1)
+        print(json.dumps({"scenario": scenario, "checks": checks, "passed": result["passed"]}))
 
-    sys.exit(0 if out["passed"] else 1)
+    sys.exit(0 if result["passed"] else 1)
 
 
 if __name__ == "__main__":

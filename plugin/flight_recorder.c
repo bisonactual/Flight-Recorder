@@ -1,47 +1,51 @@
 /*
-  flight_recorder.c — Flight recorder plugin for grblHAL.
 
-  Records the job in non-volatile memory so a sender can resume it after a
-  PC, link or controller failure:
-    - the N-number of the line the steppers are executing (never ahead of
-      the machine; needs core/executing-line.patch), the machine position,
-      tool and work offset;
-    - why the job stopped: program end, alarm, reset, reboot, or the stream
-      going away.
+  flight_recorder.c - job record and stream loss retract
 
-  Stream-loss retract. With a job running and the spindle on, the machine
-  only goes idle with nothing queued when the sender has stopped feeding it,
-  and the tool is then dwelling in the cut. When that lasts the timeout
-  ($791), or at once if the USB port or network client has closed, the
-  plugin:
-    1. blocks further input, so late lines can't cut;
-    2. retracts straight up to machine Z = -$792 (machine zero is the top of
-       Z: this is never measured from work zero), spindle still turning;
-    3. stops the spindle and coolant once clear;
-    4. records it and raises an alarm. The sender resumes from the record.
-  Straight up is safe because the tool body has already swept the column
-  above anywhere its tip has been. Undercut tools break that, so jobs using
-  them opt out (flag 1 of $FLIGHT=<job>). Without Z homed there is no retract.
+  Part of the Flight-Recorder plugin for grblHAL
 
-  Event log (event_log.c): resets and their cause, alarms, error replies,
-  inputs, limits, the sender's link and Modbus errors, in order, across
-  reboots: what to read when a machine misbehaves "for no reason".
+  Copyright (c) 2026 bisonactual
 
-  After an unexpected reset (a job was running, a watchdog reset or a
-  brown-out), the stop of the spindle and coolant that the core sends at boot
-  is logged, and sent again two seconds later for a Modbus VFD that missed
-  it. Nothing moves: the board waits in its homing alarm.
+  Flight-Recorder is free software: you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or
+  (at your option) any later version.
 
-  Watchdog builds (FR_WATCHDOG_ENABLE): if the main loop stops for $793
-  seconds, the processor resets, and the above stops the spindle. It starts
-  with the main loop, so slow start-up work can't trip it, and is fed from the
-  main loop and from blocking delays.
+  Flight-Recorder is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+  GNU General Public License for more details.
 
-  Commands, replies and settings ($790-$793): docs/COMMANDS.md.
+  You should have received a copy of the GNU General Public License
+  along with Flight-Recorder. If not, see <http://www.gnu.org/licenses/>.
+
 */
 
-// grblHAL headers before driver.h: the simulator's driver.h would otherwise
-// pull in the unpatched core headers, without st_get_executing_line_number().
+/*
+  The record lives in non-volatile memory (FRAM on the Flexi-HAL A7) and holds
+  the line number the steppers are executing, the machine position, tool and
+  work offset, and why the job stopped. A sender can resume a job from it after
+  the PC, the link or the controller has gone away. The line number comes from
+  core/executing-line.patch, so it is never ahead of the machine.
+
+  If the sender stops feeding a job while the spindle is on, the machine goes
+  idle with the tool sitting in the cut. After $791 seconds of that, or straight
+  away if the USB port or network client goes, we stop reading input, retract
+  straight up to machine Z -$792, stop the spindle and coolant and raise alarm
+  80. Straight up is safe because the tool body has already been everywhere
+  above where the tip has been - except with undercut tools, so jobs using
+  those can opt out when they are stamped. No retract unless Z is homed.
+
+  After an unexpected reset the core stops the spindle and coolant at boot. We
+  log that it happened and send the stop again a couple of seconds later, in
+  case a Modbus VFD missed it. Watchdog builds (FR_WATCHDOG_ENABLE) also reset
+  the board if the main loop stops for $793 seconds.
+
+  The commands, settings and how to resume are in docs/COMMANDS.md.
+*/
+
+// These have to come before driver.h, otherwise the simulator's driver.h pulls in
+// the unpatched core headers and st_get_executing_line_number() is missing.
 #include "grbl/hal.h"
 #include "grbl/stepper.h"
 
@@ -69,68 +73,73 @@
 #include "flight_recorder.h"
 #include "event_log.h"
 
-#define FR_SETTING_RETRACT  790
-#define FR_SETTING_TIMEOUT  791
-#define FR_SETTING_DEPTH    792
-#define FR_SETTING_WATCHDOG 793
+#define SETTING_AUTO_RETRACT    790
+#define SETTING_TIMEOUT         791
+#define SETTING_RETRACT_DEPTH   792
+#define SETTING_WATCHDOG        793
 
-#define FR_ALARM            ((alarm_code_t)80)  // retracted
-#define FR_ALARM_STOPPED    ((alarm_code_t)81)  // the retract couldn't finish: machine stopped
+#define ALARM_RETRACTED         ((alarm_code_t)80)
+#define ALARM_RETRACT_FAILED    ((alarm_code_t)81)
 
-#define FR_WRITE_INTERVAL   20u     // ms between writes while the line changes
-#ifndef FR_RETRACT_LIMIT            // shorter for a test build
-#define FR_RETRACT_LIMIT    120000u // ms before a retract that hasn't finished is given up
+#define WRITE_INTERVAL          20u         // ms between record writes while the line changes
+#ifndef FR_RETRACT_LIMIT                    // can be set shorter for a test build
+#define FR_RETRACT_LIMIT        120000u     // ms we give a retract before stopping the machine
 #endif
 
 typedef struct {
-    bool  auto_retract;
+    bool auto_retract;
     float timeout;          // s
     float retract_depth;    // mm below machine zero
-    uint8_t watchdog;       // s, 0 = off; a setting in watchdog builds only, kept in all for one layout
-} fr_settings_t;
+    uint8_t watchdog;       // s, 0 = off. Only a setting in watchdog builds, but always here so the layout is the same
+} recorder_settings_t;
 
-/* ── Static state ─────────────────────────────────────────────────────────── */
+typedef enum {
+    Retract_Idle = 0,
+    Retract_Wait,           // waiting for the line that was executing to finish
+    Retract_Up,
+    Retract_SpindleOff
+} retract_phase_t;
 
-static fr_settings_t config;
-static nvs_address_t nvs_addr;
-static bool storage_ok = false;
+static recorder_settings_t config;
+static nvs_address_t nvs_address;
+static bool have_storage = false;
 
-static fr_record_t rec;
-static uint32_t slot = 0;           // slot written last
-static bool dirty = false;
+static fr_record_t record;
+static uint32_t newest_slot = 0;
+static bool record_changed = false;
 static uint32_t last_write = 0;
 
-static uint32_t line_seen = 0;      // executing line last looked at
-static uint32_t quiet_since = 0;    // start of the current starved stretch
-static volatile uint32_t busy_at = 0; // last time something blocked in a delay (dwell, spin-up)
-static volatile bool reset_seen = false;
+static uint32_t last_line = 0;
+static uint32_t starved_since = 0;
+static volatile uint32_t last_delay = 0;    // when a dwell or spindle spin-up delay last ran
+static volatile bool reset_pending = false;
 static fr_reason_t link_lost = FR_Reason_None;
-static stream_type_t stream_was;    // input before the last stream change
-static bool discard = false;        // the next blocked read drops the half-received line
+static stream_type_t last_stream_type;
+static bool drop_partial_line = false;
 
 static struct {
     stream_type_t type;
-    bool watch_connection;
-} job_link;
+    bool check_connected;
+} job_stream;               // the stream the job was started on
 
-static enum { Retract_Idle = 0, Retract_Sync, Retract_Move, Retract_SpindleOff } retract = Retract_Idle;
-static bool retract_queued = false;
+static retract_phase_t retract_phase = Retract_Idle;
+static bool command_queued = false;
 static uint32_t retract_started = 0;
-static float retract_target = 0.0f;
+static float retract_z = 0.0f;
 
-static on_execute_realtime_ptr     on_execute_realtime = NULL;
-static on_state_change_ptr         on_state_change = NULL;
-static on_program_completed_ptr    on_program_completed = NULL;
-static on_reset_ptr                on_reset = NULL;
-static on_stream_changed_ptr       on_stream_changed = NULL;
-static on_report_options_ptr       on_report_options = NULL;
+static on_execute_realtime_ptr on_execute_realtime;
+static on_state_change_ptr on_state_change;
+static on_program_completed_ptr on_program_completed;
+static on_reset_ptr on_reset;
+static on_stream_changed_ptr on_stream_changed;
+static on_report_options_ptr on_report_options;
 #if FR_WATCHDOG_ENABLE
-static on_execute_realtime_ptr     on_execute_delay = NULL;
+static on_execute_realtime_ptr on_execute_delay;
 #endif
-static stream_read_ptr             stream_read = NULL;
-static void (*delay_ms)(uint32_t ms, delay_callback_ptr callback) = NULL;
+static stream_read_ptr stream_read;
+static void (*driver_delay_ms)(uint32_t ms, delay_callback_ptr callback);
 
-/* ── Record storage ───────────────────────────────────────────────────────── */
+// Record storage
 
 static uint32_t crc32 (const uint8_t *data, uint32_t size)
 {
@@ -145,92 +154,101 @@ static uint32_t crc32 (const uint8_t *data, uint32_t size)
     return ~crc;
 }
 
-static bool record_valid (const fr_record_t *r)
+static bool is_valid_record (const fr_record_t *rec)
 {
-    return r->magic == FR_MAGIC && r->crc == crc32((const uint8_t *)r, offsetof(fr_record_t, crc));
+    return rec->magic == FR_MAGIC && rec->crc == crc32((const uint8_t *)rec, offsetof(fr_record_t, crc));
 }
 
-// Two copies: each write goes to the older slot, so a power cut mid-write
-// leaves the previous record intact. A failed write leaves the newer copy
-// alone too: the retry goes to the same older slot.
-static void record_write (void)
+// There are two copies and each write goes to the older one, so a power cut in the
+// middle of a write still leaves the previous record. If a write fails we try the
+// same slot again next time and never touch the newer copy.
+static void write_record (void)
 {
-    if(!storage_ok)
+    if(!have_storage)
         return;
 
-    rec.magic = FR_MAGIC;
-    rec.seq++;
-    rec.crc = crc32((const uint8_t *)&rec, offsetof(fr_record_t, crc));
+    record.magic = FR_MAGIC;
+    record.seq++;
+    record.crc = crc32((const uint8_t *)&record, offsetof(fr_record_t, crc));
 
-    bool ok = fr_storage_write((slot ^ 1) * FR_SLOT_SIZE, &rec, sizeof(fr_record_t));
+    bool ok = fr_storage_write((newest_slot ^ 1) * FR_SLOT_SIZE, &record, sizeof(fr_record_t));
+
     fr_log_storage_result(ok);
     if(ok)
-        slot ^= 1;
+        newest_slot ^= 1;
 
-    dirty = !ok;
+    record_changed = !ok;
     last_write = hal.get_elapsed_ticks();
 }
 
-static bool record_load (void)
+static bool load_record (void)
 {
-    fr_record_t r[2];
-    bool ok[2];
+    fr_record_t copy[2];
+    bool valid[2];
 
     for(uint_fast8_t i = 0; i < 2; i++)
-        ok[i] = fr_storage_read(i * FR_SLOT_SIZE, &r[i], sizeof(fr_record_t)) && record_valid(&r[i]);
+        valid[i] = fr_storage_read(i * FR_SLOT_SIZE, &copy[i], sizeof(fr_record_t)) && is_valid_record(&copy[i]);
 
-    if(!(ok[0] || ok[1]))
+    if(!(valid[0] || valid[1]))
         return false;
 
-    slot = ok[0] && ok[1] ? (int32_t)(r[1].seq - r[0].seq) > 0 : ok[1];  // newer, across wrap-around
-    memcpy(&rec, &r[slot], sizeof(fr_record_t));
+    // Take the newer one. The subtraction keeps that right when seq wraps around.
+    if(valid[0] && valid[1])
+        newest_slot = (int32_t)(copy[1].seq - copy[0].seq) > 0;
+    else
+        newest_slot = valid[1];
+
+    memcpy(&record, &copy[newest_slot], sizeof(fr_record_t));
 
     return true;
 }
 
-// Where the machine is and what it is doing, from the live state.
-static void record_snapshot (void)
+// Fill in where the machine is and what it is doing right now.
+static void take_snapshot (void)
 {
     float mpos[N_AXIS];
 
     system_convert_array_steps_to_mpos(mpos, sys.position);
-    memset(rec.mpos, 0, sizeof(rec.mpos));
-    memcpy(rec.mpos, mpos, sizeof(float) * (N_AXIS < FR_AXES ? N_AXIS : FR_AXES));
+    memset(record.mpos, 0, sizeof(record.mpos));
+    memcpy(record.mpos, mpos, sizeof(float) * (N_AXIS < FR_AXES ? N_AXIS : FR_AXES));
 
-    rec.tool = gc_state.tool ? gc_state.tool->tool_id : 0;
-    rec.wcs = (uint8_t)gc_state.modal.g5x_offset.id;
-    rec.flags.homed = !!(sys.homed.mask & bit(Z_AXIS));
-    rec.flags.spindle_on = gc_state.modal.spindle[0].state.on;
-    rec.flags.coolant_on = !!gc_state.modal.coolant.value;
+    record.tool = gc_state.tool ? gc_state.tool->tool_id : 0;
+    record.wcs = (uint8_t)gc_state.modal.g5x_offset.id;
+    record.flags.homed = !!(sys.homed.mask & bit(Z_AXIS));
+    record.flags.spindle_on = gc_state.modal.spindle[0].state.on;
+    record.flags.coolant_on = !!gc_state.modal.coolant.value;
 }
 
-// The job's state changes go into the event log too: state in the low nibble, reason in the high.
-static void log_job (void)
+// Job state changes go in the event log as well, state in the low nibble and reason in the high one.
+static void log_job_state (void)
 {
-    fr_log_event(FR_Event_Job, (uint8_t)(rec.state | rec.reason << 4), rec.state == FR_Running ? rec.job : rec.line);
+    fr_log_event(FR_Event_Job, (uint8_t)(record.state | record.reason << 4),
+                  record.state == FR_Running ? record.job : record.line);
 }
 
-static void record_stop (fr_reason_t reason, alarm_code_t alarm)
+static void stop_job (fr_reason_t reason)
 {
-    record_snapshot();
-    rec.state = FR_Stopped;
-    rec.reason = reason;
-    rec.alarm = (uint8_t)alarm;
-    record_write();
-    log_job();
+    take_snapshot();
+    record.state = FR_Stopped;
+    record.reason = reason;
+    record.alarm = 0;
+    write_record();
+    log_job_state();
 }
 
-/* ── Reporting ────────────────────────────────────────────────────────────── */
+// Reporting
 
 const char *fr_state_name (uint8_t state)
 {
     static const char *names[] = { "Idle", "Running", "Stopped", "Retracted", "Completed" };
+
     return state < sizeof(names) / sizeof(names[0]) ? names[state] : "?";
 }
 
 const char *fr_reason_name (uint8_t reason)
 {
     static const char *names[] = { "none", "timeout", "usb", "network", "alarm", "reset", "reboot" };
+
     return reason < sizeof(names) / sizeof(names[0]) ? names[reason] : "?";
 }
 
@@ -240,78 +258,80 @@ static void report_record (void)
 
     snprintf(buf, sizeof(buf),
              "[FLIGHT:%s|why=%s|job=%08lX|ln=%lu|boot=%lu|alarm=%u|tool=%ld|wcs=%s|flags=%02X|mpos=%.3f,%.3f,%.3f,%.3f,%.3f]",
-             fr_state_name(rec.state), fr_reason_name(rec.reason), (unsigned long)rec.job,
-             (unsigned long)rec.line, (unsigned long)rec.boot, rec.alarm, (long)rec.tool,
-             gc_coord_system_to_str((coord_system_id_t)rec.wcs), rec.flags.value,
-             rec.mpos[0], rec.mpos[1], rec.mpos[2], rec.mpos[3], rec.mpos[4]);
+             fr_state_name(record.state), fr_reason_name(record.reason), (unsigned long)record.job,
+             (unsigned long)record.line, (unsigned long)record.boot, record.alarm, (long)record.tool,
+             gc_coord_system_to_str((coord_system_id_t)record.wcs), record.flags.value,
+             record.mpos[0], record.mpos[1], record.mpos[2], record.mpos[3], record.mpos[4]);
+
     hal.stream.write(buf);
     hal.stream.write(ASCII_EOL);
 }
 
-/* ── Input blocking (after the sender's link is lost) ─────────────────────── */
+// Input blocking, used once the sender's link is lost
 
-// The first read after blocking returns CAN, which makes the core drop the line it
-// has half received: the rest of it must not be joined onto whatever comes next.
-static int32_t blocked_read (void)
+// Stands in for the stream's read function while input is blocked. The first call
+// returns CAN, which makes the core throw away any line it has only half received,
+// so the rest of it can't get joined onto whatever arrives next.
+static int32_t blockedRead (void)
 {
-    if(discard) {
-        discard = false;
+    if(drop_partial_line) {
+        drop_partial_line = false;
         return ASCII_CAN;
     }
 
     return SERIAL_NO_DATA;
 }
 
-// Blocking also empties the input buffer, every time it's called.
-static void input_block (bool on)
+// Also empties the input buffer, every time it is called with on set.
+static void block_input (bool on)
 {
     if(on) {
-        if(hal.stream.read != blocked_read) {
+        if(hal.stream.read != blockedRead) {
             stream_read = hal.stream.read;
-            hal.stream.read = blocked_read;
-            discard = true;
+            hal.stream.read = blockedRead;
+            drop_partial_line = true;
         }
         if(hal.stream.reset_read_buffer)
             hal.stream.reset_read_buffer();
-    } else if(hal.stream.read == blocked_read)
+    } else if(hal.stream.read == blockedRead)
         hal.stream.read = stream_read;
 }
 
-/* ── Stream-loss retract ──────────────────────────────────────────────────── */
+// Stream loss retract
 
-static void retract_end (const char *message)
+static void end_retract (const char *message)
 {
-    retract = Retract_Idle;
-    retract_queued = false;
+    retract_phase = Retract_Idle;
+    command_queued = false;
     report_message(message, Message_Warning);
 }
 
-// The retract couldn't finish (a hold, or a command that never completed): stop the
-// machine rather than reopen input with the spindle perhaps still turning.
-static void retract_fail (const char *message)
+// The retract couldn't finish, for example because of a feed hold. Stop the machine
+// instead of letting input back in with the spindle possibly still running.
+static void abort_retract (const char *message)
 {
-    retract_end(message);
+    end_retract(message);
     mc_reset();
-    system_set_exec_alarm(FR_ALARM_STOPPED);
+    system_set_exec_alarm(ALARM_RETRACT_FAILED);
 }
 
 static void stream_lost (fr_reason_t reason)
 {
-    record_stop(reason, Alarm_None);
+    stop_job(reason);
 
-    if(!config.auto_retract || rec.flags.no_retract || !rec.flags.homed) {
+    if(!config.auto_retract || record.flags.no_retract || !record.flags.homed) {
         report_message("Flight recorder: stream lost, no auto retract", Message_Warning);
         return;
     }
 
-    input_block(true);
-    retract_target = -config.retract_depth;
-    retract = Retract_Sync;
-    retract_queued = false;
+    block_input(true);
+    retract_z = -config.retract_depth;
+    retract_phase = Retract_Wait;
+    command_queued = false;
     retract_started = hal.get_elapsed_ticks();
 }
 
-static void retract_step (sys_state_t state, uint32_t now)
+static void retract_poll (sys_state_t state, uint32_t now)
 {
     float mpos[N_AXIS];
 
@@ -319,61 +339,62 @@ static void retract_step (sys_state_t state, uint32_t now)
     float z = mpos[Z_AXIS];
 
     if(state & (STATE_ALARM|STATE_ESTOP)) {
-        retract_end("Flight recorder: retract abandoned");
+        end_retract("Flight recorder: retract abandoned");
         return;
     }
 
     if(now - retract_started > FR_RETRACT_LIMIT) {
-        retract_fail("Flight recorder: retract did not finish, machine stopped");
+        abort_retract("Flight recorder: retract did not finish, machine stopped");
         return;
     }
 
-    input_block(true);
+    block_input(true);
 
-    switch(retract) {
+    switch(retract_phase) {
 
-        // The stream can go while a line is still executing (a dwell, a spin-up), and
-        // that line may move further. Queued commands run only between lines, and G4P0
-        // waits for the motion before it: once it has run, Z is where the job left it.
-        // Queued only after the blocked read's CAN, which would discard it.
-        case Retract_Sync:
-            if(discard)
+        // The link can go while a line is still executing, a dwell or a spin-up delay
+        // say, and that line may still move afterwards. Queued commands only run
+        // between lines and G4P0 waits for all motion before it, so once it has run
+        // Z is where the job left it. Don't queue it until the CAN from blockedRead()
+        // has been read, as the CAN would throw it away.
+        case Retract_Wait:
+            if(drop_partial_line)
                 break;
-            if(!retract_queued)
-                retract_queued = grbl.enqueue_gcode("G4P0");
-            else if(grbl.enqueue_gcode("")) {       // accepted only once G4P0 has run; queues nothing
-                retract = z >= retract_target - 0.001f ? Retract_SpindleOff : Retract_Move;
-                retract_queued = false;
+            if(!command_queued)
+                command_queued = grbl.enqueue_gcode("G4P0");
+            else if(grbl.enqueue_gcode("")) {   // only accepted once G4P0 has run, and queues nothing
+                retract_phase = z >= retract_z - 0.001f ? Retract_SpindleOff : Retract_Up;
+                command_queued = false;
             }
             break;
 
-        case Retract_Move:
-            if(!retract_queued) {
-                char cmd[32];
-                float value = gc_state.modal.units_imperial ? retract_target / MM_PER_INCH : retract_target;
-                snprintf(cmd, sizeof(cmd), "G53G0Z%.4f", value);
-                retract_queued = grbl.enqueue_gcode(cmd);
-            } else if(state == STATE_IDLE && plan_get_current_block() == NULL &&
-                       fabsf(z - retract_target) < 0.01f) {
-                retract = Retract_SpindleOff;
-                retract_queued = false;
+        case Retract_Up:
+            if(!command_queued) {
+                char command[32];
+                float value = gc_state.modal.units_imperial ? retract_z / MM_PER_INCH : retract_z;
+                snprintf(command, sizeof(command), "G53G0Z%.4f", value);
+                command_queued = grbl.enqueue_gcode(command);
+            } else if(state == STATE_IDLE && plan_get_current_block() == NULL && fabsf(z - retract_z) < 0.01f) {
+                retract_phase = Retract_SpindleOff;
+                command_queued = false;
             }
             break;
 
         case Retract_SpindleOff:
-            if(!retract_queued)
-                retract_queued = grbl.enqueue_gcode("M5M9");
+            if(!command_queued)
+                command_queued = grbl.enqueue_gcode("M5M9");
             else if(state == STATE_IDLE && !gc_state.modal.spindle[0].state.on) {
-                if(z < retract_target - 0.01f) {    // never expected: nothing else can move it
-                    retract_fail("Flight recorder: Z below the retract height, machine stopped");
+                // Should never happen since nothing else can move Z now, but check before we say Retracted.
+                if(z < retract_z - 0.01f) {
+                    abort_retract("Flight recorder: Z below the retract height, machine stopped");
                     break;
                 }
-                rec.state = FR_Retracted;
-                record_write();
-                log_job();
-                retract = Retract_Idle;
-                retract_queued = false;
-                system_raise_alarm(FR_ALARM);
+                record.state = FR_Retracted;
+                write_record();
+                log_job_state();
+                retract_phase = Retract_Idle;
+                command_queued = false;
+                system_raise_alarm(ALARM_RETRACTED);
             }
             break;
 
@@ -382,16 +403,16 @@ static void retract_step (sys_state_t state, uint32_t now)
     }
 }
 
-/* ── Watchdog and boot safety ─────────────────────────────────────────────── */
+// Watchdog and spindle stop at boot
 
-static uint8_t boot_stop = 0;           // fr_boot_stop_t: why the spindle was stopped at boot
-static uint32_t boot_stop_again = 0;    // when to stop it once more, 0 until logged
+static uint8_t spindle_stop_reason = 0;     // fr_boot_stop_t bits
+static uint32_t spindle_stop_again = 0;     // when to send the stop again, 0 until logged
 
 #if FR_WATCHDOG_ENABLE
 
-static enum { Watchdog_Unread = 0, Watchdog_Off, Watchdog_On } watchdog = Watchdog_Unread;
+static enum { Watchdog_NotChecked = 0, Watchdog_Off, Watchdog_On } watchdog = Watchdog_NotChecked;
 
-static void fr_execute_delay (sys_state_t state)
+static void onExecuteDelay (sys_state_t state)
 {
     if(watchdog == Watchdog_On)
         fr_watchdog_feed();
@@ -399,135 +420,143 @@ static void fr_execute_delay (sys_state_t state)
     on_execute_delay(state);
 }
 
-#endif
-
-static void boot_poll (uint32_t now)
+// $793 is only read once, at the first poll, so a change takes effect at the next boot.
+static void watchdog_poll (void)
 {
-#if FR_WATCHDOG_ENABLE
     if(watchdog == Watchdog_On)
         fr_watchdog_feed();
-    else if(watchdog == Watchdog_Unread) {     // read once: $793 takes effect at the next boot
+    else if(watchdog == Watchdog_NotChecked) {
         if(config.watchdog) {
             fr_watchdog_start(config.watchdog < 3 ? 3 : (config.watchdog > 10 ? 10 : config.watchdog));
             watchdog = Watchdog_On;
         } else
             watchdog = Watchdog_Off;
     }
+}
+
 #endif
 
-    // The core switches the spindle and coolant off at a cold start: log why, and
-    // switch them off once more two seconds on, for a Modbus VFD that missed it.
-    if(boot_stop) {
-        if(!boot_stop_again) {
-            fr_log_event(FR_Event_SpindleOff, boot_stop, 0);
-            boot_stop_again = now + 2000;
-        } else if((int32_t)(now - boot_stop_again) >= 0) {
-            if(!gc_state.modal.spindle[0].state.on)
-                spindle_all_off(true);
-            if(!gc_state.modal.coolant.value)
-                hal.coolant.set_state((coolant_state_t){0});
-            boot_stop = 0;
-        }
+// The core has already stopped the spindle and coolant at boot. Log why it mattered,
+// then send the stop again two seconds later in case a Modbus VFD wasn't listening yet.
+static void spindle_stop_poll (uint32_t now)
+{
+    if(!spindle_stop_reason)
+        return;
+
+    if(!spindle_stop_again) {
+        fr_log_event(FR_Event_SpindleOff, spindle_stop_reason, 0);
+        spindle_stop_again = now + 2000;
+    } else if((int32_t)(now - spindle_stop_again) >= 0) {
+        if(!gc_state.modal.spindle[0].state.on)
+            spindle_all_off(true);
+        if(!gc_state.modal.coolant.value)
+            hal.coolant.set_state((coolant_state_t){0});
+        spindle_stop_reason = 0;
     }
 }
 
-/* ── Realtime polling ─────────────────────────────────────────────────────── */
+// Realtime polling
 
-// Nothing more from any client until the job is settled (retracted or stopped):
-// a client taking over must not carry on the dead sender's job.
-static void link_gone (void)
+// Once the sender is gone nobody gets input until the job has retracted or stopped,
+// so a client that takes over can't carry on the dead sender's job.
+static void sender_lost (void)
 {
-    link_lost = rec.flags.usb ? FR_Reason_UsbClosed : FR_Reason_NetworkClosed;
-    input_block(true);
+    link_lost = record.flags.usb ? FR_Reason_UsbClosed : FR_Reason_NetworkClosed;
+    block_input(true);
     report_message("Flight recorder: sender link lost", Message_Warning);
 }
 
-static void fr_execute_realtime (sys_state_t state)
+static void onExecuteRealtime (sys_state_t state)
 {
     on_execute_realtime(state);
 
     uint32_t now = hal.get_elapsed_ticks();
 
-    boot_poll(now);
+#if FR_WATCHDOG_ENABLE
+    watchdog_poll();
+#endif
+    spindle_stop_poll(now);
 
-    if(!storage_ok)
+    if(!have_storage)
         return;
 
     fr_log_poll(now);
 
-    if(reset_seen) {
-        reset_seen = false;
-        if(retract != Retract_Idle)
-            retract_end("Flight recorder: retract stopped by reset");
-        else if(rec.state == FR_Running)
-            record_stop(FR_Reason_Reset, Alarm_None);
+    if(reset_pending) {
+        reset_pending = false;
+        if(retract_phase != Retract_Idle)
+            end_retract("Flight recorder: retract stopped by reset");
+        else if(record.state == FR_Running)
+            stop_job(FR_Reason_Reset);
     }
 
-    // Input comes back once the job is settled and the half-received line has gone.
-    if(retract == Retract_Idle && rec.state != FR_Running && hal.stream.read == blocked_read && !discard)
-        input_block(false);
+    // Let input back in once the job has settled and the partial line has been dropped.
+    if(retract_phase == Retract_Idle && record.state != FR_Running && hal.stream.read == blockedRead && !drop_partial_line)
+        block_input(false);
 
-    if(retract != Retract_Idle) {
-        retract_step(state, now);
+    if(retract_phase != Retract_Idle) {
+        retract_poll(state, now);
         return;
     }
 
-    if(rec.state == FR_Running) {
+    if(record.state == FR_Running) {
 
-        // Follow the line the steppers are executing. Lines without an
-        // N-number (most macros) report 0 and are skipped; so are jogs,
-        // whose N-number isn't the file's.
+        // Follow the line the steppers are executing. Lines without an N-number (most
+        // macros) come through as 0 and are skipped. So are jogs, as their N-number
+        // isn't a line of the file.
         uint32_t line = st_get_executing_line_number();
-        if(line != line_seen) {
-            line_seen = line;
+        if(line != last_line) {
+            last_line = line;
             if(line && state != STATE_JOG) {
-                rec.line = line;
-                record_snapshot();
-                dirty = true;
+                record.line = line;
+                take_snapshot();
+                record_changed = true;
             }
         }
 
-        // Not for a file run from the SD card: it can't hang, and its input isn't the sender's.
+        // Jobs run from the SD card aren't watched. The file can't hang and there is no
+        // sender link to lose.
         if(hal.stream.type != StreamType_File) {
 
-            // The sender's link: the stream changing away from it (also caught as it
-            // happens, in fr_stream_changed), or closing.
+            // Has the sender gone? Either the input moved to another stream (onStreamChanged()
+            // also catches that the moment it happens) or the connection closed.
             if(link_lost == FR_Reason_None &&
-                (hal.stream.type != job_link.type || hal.stream.state.is_usb != rec.flags.usb ||
-                  (job_link.watch_connection && hal.stream.is_connected && !hal.stream.is_connected())))
-                link_gone();
+                (hal.stream.type != job_stream.type || hal.stream.state.is_usb != record.flags.usb ||
+                  (job_stream.check_connected && hal.stream.is_connected && !hal.stream.is_connected())))
+                sender_lost();
             else if(link_lost)
-                input_block(true);
+                block_input(true);
 
-            bool queue_empty = state == STATE_IDLE && plan_get_current_block() == NULL &&
-                                (hal.stream.get_rx_buffer_count == NULL || hal.stream.get_rx_buffer_count() == 0);
-            bool starved = queue_empty && gc_state.modal.spindle[0].state.on;
+            bool nothing_queued = state == STATE_IDLE && plan_get_current_block() == NULL &&
+                                   (hal.stream.get_rx_buffer_count == NULL || hal.stream.get_rx_buffer_count() == 0);
+            bool starved = nothing_queued && gc_state.modal.spindle[0].state.on;
 
             if(!starved)
-                quiet_since = now;
-            else if((int32_t)(busy_at - quiet_since) > 0) // a dwell or spin-up is not starvation
-                quiet_since = busy_at;
+                starved_since = now;
+            else if((int32_t)(last_delay - starved_since) > 0)   // a dwell or spin-up doesn't count
+                starved_since = last_delay;
 
-            if(starved && (link_lost || now - quiet_since >= (uint32_t)(config.timeout * 1000.0f)))
+            if(starved && (link_lost || now - starved_since >= (uint32_t)(config.timeout * 1000.0f)))
                 stream_lost(link_lost ? link_lost : FR_Reason_StreamTimeout);
-            else if(link_lost && queue_empty) // link gone, spindle off: nothing to retract
-                record_stop(link_lost, Alarm_None);
+            else if(link_lost && nothing_queued)    // sender gone with the spindle off, nothing to retract
+                stop_job(link_lost);
         }
     }
 
-    if(dirty && now - last_write >= FR_WRITE_INTERVAL)
-        record_write();
+    if(record_changed && now - last_write >= WRITE_INTERVAL)
+        write_record();
 }
 
-/* ── Core hooks ───────────────────────────────────────────────────────────── */
+// Core hooks
 
-static void fr_delay_ms (uint32_t ms, delay_callback_ptr callback)
+// Note when something waits in a delay, so a dwell isn't taken for a hung sender.
+static void delayMs (uint32_t ms, delay_callback_ptr callback)
 {
-    busy_at = hal.get_elapsed_ticks();
-    delay_ms(ms, callback);
+    last_delay = hal.get_elapsed_ticks();
+    driver_delay_ms(ms, callback);
 }
 
-static void fr_state_change (sys_state_t state)
+static void onStateChanged (sys_state_t state)
 {
     if(on_state_change)
         on_state_change(state);
@@ -535,63 +564,65 @@ static void fr_state_change (sys_state_t state)
     if(state & (STATE_ALARM|STATE_ESTOP))
         fr_log_event(FR_Event_Alarm, (uint8_t)sys.alarm, st_get_executing_line_number());
 
-    // After a reset, the alarm that follows (homing required, cycle aborted) isn't
-    // why the job stopped: the poll records the reset. A critical alarm (e-stop,
-    // limit) also resets, and is the reason.
-    if(rec.state == FR_Running && retract == Retract_Idle && (state & (STATE_ALARM|STATE_ESTOP)) &&
-        !(reset_seen && !alarm_is_critical(sys.alarm))) {
-        record_snapshot();
-        rec.state = FR_Stopped;
-        rec.reason = FR_Reason_Alarm;
-        rec.alarm = (uint8_t)sys.alarm;
-        dirty = true;
-        log_job();
+    // The alarm that follows a reset (homing required, cycle aborted) isn't why the job
+    // stopped, the reset is, and the realtime poll records that. A critical alarm such
+    // as an e-stop or a limit causes a reset too, and there the alarm is the reason.
+    if(record.state == FR_Running && retract_phase == Retract_Idle && (state & (STATE_ALARM|STATE_ESTOP)) &&
+        !(reset_pending && !alarm_is_critical(sys.alarm))) {
+        take_snapshot();
+        record.state = FR_Stopped;
+        record.reason = FR_Reason_Alarm;
+        record.alarm = (uint8_t)sys.alarm;
+        record_changed = true;
+        log_job_state();
     }
 }
 
-static void fr_program_completed (program_flow_t program_flow, bool check_mode)
+static void onProgramCompleted (program_flow_t program_flow, bool check_mode)
 {
     if(on_program_completed)
         on_program_completed(program_flow, check_mode);
 
-    if(!check_mode && rec.state == FR_Running) {
-        record_snapshot();
-        rec.state = FR_Completed;
-        rec.reason = FR_Reason_None;
-        dirty = true;
-        log_job();
+    if(!check_mode && record.state == FR_Running) {
+        take_snapshot();
+        record.state = FR_Completed;
+        record.reason = FR_Reason_None;
+        record_changed = true;
+        log_job_state();
     }
 }
 
-// Interrupt context: just note it, the realtime poll does the rest.
-static void fr_reset (void)
+// Called from an interrupt, so just make a note for the realtime poll.
+static void onReset (void)
 {
-    reset_seen = true;
+    reset_pending = true;
 
     if(on_reset)
         on_reset();
 }
 
-static void fr_stream_changed (stream_type_t type)
+static void onStreamChanged (stream_type_t type)
 {
     if(on_stream_changed)
         on_stream_changed(type);
 
-    // Any change of input mid-job is the sender losing it, even when a new client
-    // takes over before the next poll could see it. Caught here, before the new
-    // stream is read. A file run from the SD card, and its end, are not.
-    bool file = type == StreamType_File || stream_was == StreamType_File;
-    stream_was = type;
+    // Any change of input during a job means the sender has lost it, even if a new
+    // client takes over before the next poll. Catching it here, before the new stream
+    // is read, stops that client's first lines from running. Starting or ending a file
+    // run from the SD card doesn't count.
+    bool file = type == StreamType_File || last_stream_type == StreamType_File;
 
-    if(rec.state == FR_Running && retract == Retract_Idle && link_lost == FR_Reason_None && !file)
-        link_gone();
-    else if(retract != Retract_Idle || (rec.state == FR_Running && link_lost))
-        input_block(true);
+    last_stream_type = type;
+
+    if(record.state == FR_Running && retract_phase == Retract_Idle && link_lost == FR_Reason_None && !file)
+        sender_lost();
+    else if(retract_phase != Retract_Idle || (record.state == FR_Running && link_lost))
+        block_input(true);
 }
 
-/* ── $ commands ───────────────────────────────────────────────────────────── */
+// $ commands
 
-static status_code_t job_start (sys_state_t state, char *args)
+static status_code_t start_job (sys_state_t state, char *args)
 {
     char *end;
     uint32_t job = strtoul(args, &end, 16);
@@ -603,31 +634,32 @@ static status_code_t job_start (sys_state_t state, char *args)
     if(state != STATE_IDLE)
         return Status_IdleError;
 
-    // Stamped again after it stopped: a resume. Its re-entry moves have no N-numbers,
-    // so keep the line until a numbered line runs, or a second cut would lose it.
-    bool resume = job == rec.job && (rec.state == FR_Stopped || rec.state == FR_Retracted);
+    // The same job stamped again after it stopped is a resume. The moves back into the
+    // cut have no N-numbers, so keep the old line until a numbered line runs, otherwise
+    // a second interruption during them would lose it.
+    bool resuming = job == record.job && (record.state == FR_Stopped || record.state == FR_Retracted);
 
-    rec.state = FR_Running;
-    rec.reason = FR_Reason_None;
-    rec.alarm = 0;
-    rec.job = job;
-    if(!resume)
-        rec.line = 0;
-    rec.flags.value = 0;
-    rec.flags.no_retract = !!(flags & 1);
-    rec.flags.usb = hal.stream.state.is_usb;
-    rec.flags.network = hal.stream.type == StreamType_WebSocket || hal.stream.type == StreamType_Telnet;
-    record_snapshot();
-    record_write();
-    log_job();
+    record.state = FR_Running;
+    record.reason = FR_Reason_None;
+    record.alarm = 0;
+    record.job = job;
+    if(!resuming)
+        record.line = 0;
+    record.flags.value = 0;
+    record.flags.no_retract = !!(flags & 1);
+    record.flags.usb = hal.stream.state.is_usb;
+    record.flags.network = hal.stream.type == StreamType_WebSocket || hal.stream.type == StreamType_Telnet;
+    take_snapshot();
+    write_record();
+    log_job_state();
 
-    job_link.type = hal.stream.type;
-    job_link.watch_connection = hal.stream.is_connected && hal.stream.is_connected();
+    job_stream.type = hal.stream.type;
+    job_stream.check_connected = hal.stream.is_connected && hal.stream.is_connected();
     link_lost = FR_Reason_None;
-    line_seen = st_get_executing_line_number();
-    quiet_since = hal.get_elapsed_ticks();
+    last_line = st_get_executing_line_number();
+    starved_since = hal.get_elapsed_ticks();
 
-    if(config.auto_retract && !rec.flags.no_retract && !rec.flags.homed)
+    if(config.auto_retract && !record.flags.no_retract && !record.flags.homed)
         report_message("Flight recorder: Z not homed, no auto retract for this job", Message_Warning);
 
     report_record();
@@ -638,7 +670,7 @@ static status_code_t job_start (sys_state_t state, char *args)
 static status_code_t cmd_flight (sys_state_t state, char *args)
 {
     if(args)
-        return job_start(state, args);
+        return start_job(state, args);
 
     report_record();
 
@@ -647,14 +679,14 @@ static status_code_t cmd_flight (sys_state_t state, char *args)
 
 static status_code_t cmd_flight_clear (sys_state_t state, char *args)
 {
-    memset(&rec.mpos, 0, sizeof(rec.mpos));
-    rec.state = FR_Idle;
-    rec.reason = FR_Reason_None;
-    rec.alarm = 0;
-    rec.job = 0;
-    rec.line = 0;
-    rec.flags.value = 0;
-    record_write();
+    memset(&record.mpos, 0, sizeof(record.mpos));
+    record.state = FR_Idle;
+    record.reason = FR_Reason_None;
+    record.alarm = 0;
+    record.job = 0;
+    record.line = 0;
+    record.flags.value = 0;
+    write_record();
     report_record();
 
     return Status_OK;
@@ -678,7 +710,7 @@ static status_code_t cmd_events_clear (sys_state_t state, char *args)
 
 #if FR_WATCHDOG_ENABLE
 
-// Hang as a stuck controller would, until the watchdog resets the board.
+// Hang the way a stuck controller would, until the watchdog resets the board.
 static status_code_t cmd_watchdog_test (sys_state_t state, char *args)
 {
     if(watchdog != Watchdog_On)
@@ -693,8 +725,8 @@ static status_code_t cmd_watchdog_test (sys_state_t state, char *args)
 
 #endif
 
-// The queries also work during an e-stop or other blocking event.
-static const sys_command_t fr_commands[] = {
+// $FLIGHT and $EVENTS still answer during an e-stop or other blocking alarm.
+static const sys_command_t flight_commands[] = {
     { "FLIGHT", cmd_flight, { .allow_blocking = On }, { .str = "report the flight record; =<job>[,<flags>] starts recording a job" } },
     { "FLIGHTCLEAR", cmd_flight_clear, { .noargs = On }, { .str = "clear the flight record" } },
     { "EVENTS", cmd_events, { .allow_blocking = On }, { .str = "list the last 100 events; =<n> the last n" } },
@@ -704,75 +736,73 @@ static const sys_command_t fr_commands[] = {
 #endif
 };
 
-static void fr_report_options (bool newopt)
+static void onReportOptions (bool newopt)
 {
     if(on_report_options)
         on_report_options(newopt);
 
     if(!newopt)
-        report_plugin(storage_ok ? "Flight Recorder" : "Flight Recorder (no storage)", FR_VERSION);
+        report_plugin(have_storage ? "Flight Recorder" : "Flight Recorder (no storage)", FR_VERSION);
 }
 
-/* ── Settings ─────────────────────────────────────────────────────────────── */
+// Settings
 
-static const setting_detail_t fr_settings[] = {
-    { FR_SETTING_RETRACT, Group_General, "Auto retract on stream loss", NULL, Format_Bool, NULL, NULL, NULL, Setting_NonCore, &config.auto_retract },
-    { FR_SETTING_TIMEOUT, Group_General, "Stream loss timeout", "s", Format_Decimal, "#0.0", "0.5", "60", Setting_NonCore, &config.timeout },
-    { FR_SETTING_DEPTH,   Group_General, "Retract below machine zero", "mm", Format_Decimal, "##0.0", "1", "500", Setting_NonCore, &config.retract_depth },
+static const setting_detail_t plugin_settings[] = {
+    { SETTING_AUTO_RETRACT, Group_General, "Auto retract on stream loss", NULL, Format_Bool, NULL, NULL, NULL, Setting_NonCore, &config.auto_retract },
+    { SETTING_TIMEOUT, Group_General, "Stream loss timeout", "s", Format_Decimal, "#0.0", "0.5", "60", Setting_NonCore, &config.timeout },
+    { SETTING_RETRACT_DEPTH, Group_General, "Retract below machine zero", "mm", Format_Decimal, "##0.0", "1", "500", Setting_NonCore, &config.retract_depth },
 #if FR_WATCHDOG_ENABLE
-    // 3-10 s, or 0 for off (1 and 2 act as 3). Takes effect at the next boot.
-    { FR_SETTING_WATCHDOG, Group_General, "Watchdog timeout", "s", Format_Int8, "#0", "0", "10", Setting_NonCore, &config.watchdog }
+    // 3 to 10 s, or 0 for off. 1 and 2 are taken as 3. Takes effect at the next boot.
+    { SETTING_WATCHDOG, Group_General, "Watchdog timeout", "s", Format_Int8, "#0", "0", "10", Setting_NonCore, &config.watchdog }
 #endif
 };
 
-static void fr_settings_save (void)
+static void plugin_settings_save (void)
 {
-    hal.nvs.memcpy_to_nvs(nvs_addr, (uint8_t *)&config, sizeof(config), true);
+    hal.nvs.memcpy_to_nvs(nvs_address, (uint8_t *)&config, sizeof(config), true);
 }
 
-static void fr_settings_restore (void)
+static void plugin_settings_restore (void)
 {
     config.auto_retract = true;
     config.timeout = 3.0f;
     config.retract_depth = 20.0f;
     config.watchdog = 5;
-    fr_settings_save();
+    plugin_settings_save();
 }
 
-static void fr_settings_load (void)
+static void plugin_settings_load (void)
 {
-    if(hal.nvs.memcpy_from_nvs((uint8_t *)&config, nvs_addr, sizeof(config), true) != NVS_TransferResult_OK)
-        fr_settings_restore();
+    if(hal.nvs.memcpy_from_nvs((uint8_t *)&config, nvs_address, sizeof(config), true) != NVS_TransferResult_OK)
+        plugin_settings_restore();
 }
-
-/* ── Public init ──────────────────────────────────────────────────────────── */
 
 void flight_recorder_init (void)
 {
     static setting_details_t settings = {
-        .settings   = fr_settings,
-        .n_settings = sizeof(fr_settings) / sizeof(setting_detail_t),
-        .load       = fr_settings_load,
-        .save       = fr_settings_save,
-        .restore    = fr_settings_restore
+        .settings = plugin_settings,
+        .n_settings = sizeof(plugin_settings) / sizeof(setting_detail_t),
+        .load = plugin_settings_load,
+        .save = plugin_settings_save,
+        .restore = plugin_settings_restore
     };
 
     static const alarm_detail_t alarms[] = {
-        { FR_ALARM, "Stream lost mid-job: tool retracted, spindle stopped. Resume from the flight record." },
-        { FR_ALARM_STOPPED, "Stream lost mid-job, and the retract couldn't finish: machine stopped where it was. Check the tool before resuming." }
+        { ALARM_RETRACTED, "Stream lost mid-job: tool retracted, spindle stopped. Resume from the flight record." },
+        { ALARM_RETRACT_FAILED, "Stream lost mid-job, and the retract couldn't finish: machine stopped where it was. Check the tool before resuming." }
     };
 
     static alarm_details_t alarm_details = {
         .n_alarms = sizeof(alarms) / sizeof(alarm_detail_t),
-        .alarms   = alarms
+        .alarms = alarms
     };
 
     static sys_commands_t commands = {
-        .n_commands = sizeof(fr_commands) / sizeof(sys_command_t),
-        .commands   = fr_commands
+        .n_commands = sizeof(flight_commands) / sizeof(sys_command_t),
+        .commands = flight_commands
     };
 
-    if(!(nvs_addr = nvs_alloc(sizeof(config))))
+    if(!(nvs_address = nvs_alloc(sizeof(config))))
         return;
 
     settings_register(&settings);
@@ -780,54 +810,58 @@ void flight_recorder_init (void)
 
     uint8_t reset_cause = fr_reset_cause();
 
-    // A brown-out flag on its own: a power-on sets it too.
+    // A power-on sets the brown-out flag as well, so only count a brown-out on its own.
     if(reset_cause & FR_Reset_Watchdog)
-        boot_stop |= FR_BootStop_Watchdog;
+        spindle_stop_reason |= FR_BootStop_Watchdog;
     if((reset_cause & FR_Reset_BrownOut) && !(reset_cause & FR_Reset_PowerOn))
-        boot_stop |= FR_BootStop_BrownOut;
+        spindle_stop_reason |= FR_BootStop_BrownOut;
 
-    // A record found Running means the controller restarted mid-job.
-    if((storage_ok = fr_storage_init())) {
-        if(!record_load())
-            memset(&rec, 0, sizeof(rec));
-        uint8_t found = rec.state;
-        rec.boot++;
-        if(rec.state == FR_Running) {
-            rec.state = FR_Stopped;
-            rec.reason = FR_Reason_Reboot;
-            boot_stop |= FR_BootStop_Job;
+    if((have_storage = fr_storage_init())) {
+
+        if(!load_record())
+            memset(&record, 0, sizeof(record));
+
+        // A record still Running at boot means the controller restarted in the middle of a job.
+        uint8_t state_at_boot = record.state;
+
+        record.boot++;
+        if(record.state == FR_Running) {
+            record.state = FR_Stopped;
+            record.reason = FR_Reason_Reboot;
+            spindle_stop_reason |= FR_BootStop_Job;
         }
-        record_write();
-        fr_log_init(rec.boot, reset_cause, found);
+        write_record();
+
+        fr_log_init(record.boot, reset_cause, state_at_boot);
         system_register_commands(&commands);
     }
 
     on_execute_realtime = grbl.on_execute_realtime;
-    grbl.on_execute_realtime = fr_execute_realtime;
+    grbl.on_execute_realtime = onExecuteRealtime;
 
     on_state_change = grbl.on_state_change;
-    grbl.on_state_change = fr_state_change;
+    grbl.on_state_change = onStateChanged;
 
     on_program_completed = grbl.on_program_completed;
-    grbl.on_program_completed = fr_program_completed;
+    grbl.on_program_completed = onProgramCompleted;
 
     on_reset = grbl.on_reset;
-    grbl.on_reset = fr_reset;
+    grbl.on_reset = onReset;
 
-    stream_was = hal.stream.type;
+    last_stream_type = hal.stream.type;
     on_stream_changed = grbl.on_stream_changed;
-    grbl.on_stream_changed = fr_stream_changed;
+    grbl.on_stream_changed = onStreamChanged;
 
     on_report_options = grbl.on_report_options;
-    grbl.on_report_options = fr_report_options;
+    grbl.on_report_options = onReportOptions;
 
-    delay_ms = hal.delay_ms;
-    hal.delay_ms = fr_delay_ms;
+    driver_delay_ms = hal.delay_ms;
+    hal.delay_ms = delayMs;
 
 #if FR_WATCHDOG_ENABLE
     on_execute_delay = grbl.on_execute_delay;
-    grbl.on_execute_delay = fr_execute_delay;
+    grbl.on_execute_delay = onExecuteDelay;
 #endif
 }
 
-#endif /* FLIGHT_RECORDER_ENABLE */
+#endif // FLIGHT_RECORDER_ENABLE

@@ -1,9 +1,30 @@
 /*
-  storage_file.c — Flight recorder storage in a host file (simulator).
 
+  storage_file.c - flight recorder storage in a file, for the simulator
+
+  Part of the Flight-Recorder plugin for grblHAL
+
+  Copyright (c) 2026 bisonactual
+
+  Flight-Recorder is free software: you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or
+  (at your option) any later version.
+
+  Flight-Recorder is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with Flight-Recorder. If not, see <http://www.gnu.org/licenses/>.
+
+*/
+
+/*
   FLIGHT.DAT in the simulator's working directory stands in for the FRAM.
-  Every write is flushed to the operating system at once, so it survives the
-  simulator being killed, which is how the evidence runs cut the power.
+  Every write is flushed straight away, so it survives the simulator being
+  killed, which is how the evidence runs cut the power.
 */
 
 #include <stdio.h>
@@ -12,9 +33,11 @@
 #include "flight_recorder.h"
 #include "event_log.h"
 
-#define FR_FILE "FLIGHT.DAT"
+#define STORAGE_FILE "FLIGHT.DAT"
 
-// A simulated processor has no reset cause and no watchdog.
+static FILE *file = NULL;
+
+// The simulated processor has no reset flags and no watchdog.
 uint8_t fr_reset_cause (void)
 {
     return 0;
@@ -29,25 +52,23 @@ void fr_watchdog_feed (void)
 {
 }
 
-static FILE *file = NULL;
-
 bool fr_storage_init (void)
 {
-    if(!(file = fopen(FR_FILE, "r+b")))
-        file = fopen(FR_FILE, "w+b");
+    if(!(file = fopen(STORAGE_FILE, "r+b")))
+        file = fopen(STORAGE_FILE, "w+b");
 
     return file != NULL;
 }
 
-// Bytes never written read as 0xFF, like erased storage.
+// Anything never written reads back as 0xFF, like erased storage.
 bool fr_storage_read (uint32_t addr, void *data, uint32_t size)
 {
     if(!file || fseek(file, (long)addr, SEEK_SET))
         return false;
 
-    size_t n = fread(data, 1, size, file);
-    if(n < size)
-        memset((uint8_t *)data + n, 0xFF, size - n);
+    size_t count = fread(data, 1, size, file);
+    if(count < size)
+        memset((uint8_t *)data + count, 0xFF, size - count);
 
     return true;
 }

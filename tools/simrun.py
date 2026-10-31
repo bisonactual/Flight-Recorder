@@ -1,7 +1,7 @@
-"""Run the FlexiHAL simulator as a child process for scripted evidence runs.
+"""Runs the FlexiHAL simulator as a child process for the scripted evidence runs.
 
-The simulator's stdin is a pipe, so its console keys (feed hold, alarms, ...)
-can be pressed from the script. kill() is SIGKILL: no flush, no shutdown,
+The simulator's stdin is a pipe, so the script can press its console keys (feed
+hold, alarms and so on). kill() sends SIGKILL, with no flush and no shutdown,
 which is what a power cut or a dead controller looks like.
 """
 
@@ -14,7 +14,7 @@ import time
 
 
 def _die_with_parent():
-    # Linux: if the script is killed (e.g. by the run cap), take the simulator with it.
+    # On Linux, if the script gets killed (by the run cap, say) the simulator goes with it.
     if sys.platform.startswith("linux"):
         ctypes.CDLL("libc.so.6").prctl(1, signal.SIGKILL)  # PR_SET_PDEATHSIG
 
@@ -41,21 +41,21 @@ class Sim:
     def start(self):
         self.boots += 1
         tag = f"boot{self.boots}"
-        cmd = [self.binary,
-               "-u", os.path.join(self.run_dir, "usb"),
-               "-w", str(self.ws_port),
-               "-e", os.path.join(self.run_dir, "EEPROM.DAT"),
-               "-r", str(self.step_report),
-               "-t", str(self.speed)]
+        command = [self.binary,
+                   "-u", os.path.join(self.run_dir, "usb"),
+                   "-w", str(self.ws_port),
+                   "-e", os.path.join(self.run_dir, "EEPROM.DAT"),
+                   "-r", str(self.step_report),
+                   "-t", str(self.speed)]
         self.out = open(os.path.join(self.run_dir, f"{tag}.sim.log"), "wb")
         self.steps = open(os.path.join(self.run_dir, f"{tag}.steps.log"), "wb")
-        self.proc = subprocess.Popen(cmd, cwd=self.run_dir, stdin=subprocess.PIPE,
+        self.proc = subprocess.Popen(command, cwd=self.run_dir, stdin=subprocess.PIPE,
                                      stdout=self.out, stderr=self.steps,
                                      preexec_fn=_die_with_parent)
-        # Wait for the USB port symlink, then give grblHAL a moment to boot.
-        link = os.path.join(self.run_dir, "usb")
+        # Wait for the USB port's symlink to appear, then give grblHAL a moment to boot.
+        port = os.path.join(self.run_dir, "usb")
         deadline = time.monotonic() + 5
-        while not os.path.exists(link) and time.monotonic() < deadline:
+        while not os.path.exists(port) and time.monotonic() < deadline:
             time.sleep(0.05)
         time.sleep(0.5)
         return self
@@ -65,7 +65,7 @@ class Sim:
         self.proc.stdin.flush()
 
     def kill(self):
-        """Power cut: SIGKILL, nothing flushed."""
+        """Power cut. SIGKILL, so nothing gets flushed."""
         if self.proc and self.proc.poll() is None:
             self.proc.send_signal(signal.SIGKILL)
             self.proc.wait()
@@ -82,6 +82,6 @@ class Sim:
         self._close_logs()
 
     def _close_logs(self):
-        for f in (getattr(self, "out", None), getattr(self, "steps", None)):
-            if f and not f.closed:
-                f.close()
+        for log in (getattr(self, "out", None), getattr(self, "steps", None)):
+            if log and not log.closed:
+                log.close()

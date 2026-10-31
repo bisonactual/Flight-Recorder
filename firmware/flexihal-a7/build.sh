@@ -1,6 +1,6 @@
 #!/bin/bash
-# Build Flexi-HAL A7 firmware with the flight recorder: Expatria's builds, each with the
-# recorder added, as UF2 files for their bootloader (same as their releases).
+# Builds Flexi-HAL A7 firmware with the flight recorder. These are Expatria's own builds
+# with the recorder added, as UF2 files for their bootloader, the same as their releases.
 #
 # Usage: firmware/flexihal-a7/build.sh [variant ...]
 #   no arguments  every variant
@@ -8,7 +8,7 @@
 #   variant       e.g. f446re_flexi_cnc_printnc_eth_sd_fr
 #
 # Needs git, python3 and PlatformIO (pio) on PATH. The driver is checked out under
-# firmware/build/ (or $FR_BUILD_DIR); UF2 files land in firmware/flexihal-a7/out/.
+# firmware/build/ (or $FR_BUILD_DIR) and the UF2 files end up in firmware/flexihal-a7/out/.
 # Extra arguments for pio (e.g. -j 3) can go in $PIO_ARGS.
 set -euo pipefail
 
@@ -25,8 +25,8 @@ if [ "${1:-}" = list ]; then
     exit 0
 fi
 
-# 1. Expatria's driver at the pinned commit; every submodule at the commit their tree
-#    records, except rgb (see driver.lock). --force resets our patches from last time.
+# 1. Expatria's driver at the pinned commit, with every submodule at the commit their tree
+#    records except rgb (see driver.lock). --force undoes our patches from last time.
 if [ ! -d "$driver/.git" ]; then
     mkdir -p "$build"
     git clone -q "$DRIVER_URL" "$driver"
@@ -45,7 +45,7 @@ if ! git -C "$driver/rgb" cat-file -e "$RGB_COMMIT^{commit}" 2>/dev/null; then
 fi
 git -C "$driver/rgb" checkout -q -f "$RGB_COMMIT"
 
-# 2. Patches: the core (executing line, plugin start-up, Modbus counters) and the status light plugin.
+# 2. Our patches to the core (executing line, plugin start-up, Modbus counters) and the status light plugin.
 git -C "$driver/grbl" apply "$root/core/executing-line.patch"
 git -C "$driver/grbl" apply "$root/core/plugin-init.patch"
 git -C "$driver/grbl" apply "$root/core/modbus-stats.patch"
@@ -55,7 +55,7 @@ git -C "$driver/rgb" apply "$here/patches/rgb-bit-count.patch"
 rm -rf "$driver/flight_recorder"
 cp -r "$root/plugin" "$driver/flight_recorder"
 
-# 4. Our variants, in the platformio.local.ini their platformio.ini already loads.
+# 4. Our variants go in platformio.local.ini, which their platformio.ini already loads.
 cp "$here/platformio.local.ini" "$driver/platformio.local.ini"
 
 variants=("$@")
@@ -64,7 +64,7 @@ if [ ${#variants[@]} -eq 0 ]; then
 fi
 
 # 5. Build. Expatria's post-build script writes FLEXI_HAL_<variant>_<driver version>.uf2
-#    into the driver folder; collect them.
+#    into the driver folder, so collect them from there.
 mkdir -p "$out"
 rm -f "$driver"/FLEXI_HAL_*_FR_*.uf2
 for v in "${variants[@]}"; do
