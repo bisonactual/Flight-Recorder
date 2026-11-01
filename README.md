@@ -4,7 +4,7 @@ This addon is highly experimental, requires hardware changes, and only currently
 
 This is part one of my changes, and does not include a spool. It adds a flight recorder that saves the position of your program every move, and in the event of communication loss with the sender, retracts and stops the spindle, and allows you to restore it from a supported sender (currently my fork of flexisender.... soon) - it also adds an event log to diagnose EMI etc.
 
-Watchdog builds should additionally reboot the board should it be frozen. I suggest 5 seconds as the default setting.
+Watchdog builds should additionally reboot the board should it be frozen. I suggest 5 seconds as the default setting. You need a watchdog enabled chip to use watchdog functions.
 
 $EVENT brings up the event log (you can use $events=n for n records)
 
