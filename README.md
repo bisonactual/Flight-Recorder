@@ -30,7 +30,7 @@ The process is below:
 
 <img width="1280" height="1046" alt="image" src="https://github.com/user-attachments/assets/dfe2bff7-8b76-45b1-97ad-a023a0b371a7" />
 
-To begin, you need to locate U27 (to the left of the USB, between the MCU and port) and remove the EEPROM. You must replace this chip with ferromagnetic RAM, and it must be I2C. 
+To begin, you need to locate U27 (to the left of the USB, between the MCU and port) and remove the EEPROM. You must replace this chip with ferroelectric RAM, and it must be I2C. 
 I used https://www.infineon.com/part/FM24V10-G which is a 1mbit chip, but 512kbit may work. SPI will not work. It is mostly a drag and drop replacement, and you put your FRAM where the EEPROM used to be.
 
 You then need to install the firmware provided here. Then use flexisender and off you go.
