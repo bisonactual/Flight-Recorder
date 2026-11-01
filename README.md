@@ -86,21 +86,11 @@ stream stops. Open source (GPLv3, like grblHAL).
 
 ## Layout
 
- plugin/                 the grblHAL plugin
--  flight_recorder.c/h     record, stream-loss retract, $ commands, settings
--  event_log.c/h           the event log
--  storage_fram.c          the A7's FRAM (checked at start-up), reset cause, watchdog
--  storage_file.c          a host file (simulator)
--  library.json            PlatformIO library (FRAM storage only)
-core/                   grblHAL core patches
--  executing-line.patch    report the line the steppers are executing
--  plugin-init.patch       start the recorder (firmware builds)
--  modbus-stats.patch      read the Modbus driver's error counters (firmware builds)
-firmware/               board firmware: Expatria's builds plus the recorder
--  flexihal-a7/            Flexi-HAL A7 (STM32F446), UF2 for Expatria's bootloader
-- docs/COMMANDS.md        $ commands, record, settings, alarm, how to resume
-tools/                  test sender, simulator harness, evidence scripts
-evidence/               simulator runs: programs, results, plots
+- plugin/                 the grblHAL plugin which contains the plugin
+- core/                   grblHAL core patches
+- firmware/               board firmware: Expatria's builds plus the recorder
+- tools/                  test sender, simulator harness, evidence scripts
+- evidence/               simulator runs: programs, results, plots
 ```
 
 ## Why a core patch
