@@ -74,8 +74,8 @@ stream stops. Open source (GPLv3, like grblHAL).
 
 ## Supported hardware
 
- **Flexi-HAL Rev A7 ONLY** with the EEPROM at **U27** replaced by I2C FRAM (I used Infineon, 1 Mbit / 128 KB I2C FRAM, SOIC-8). This direct
-  replacement is the only supported storage.
+ - **Flexi-HAL Rev A7 ONLY** with the EEPROM at **U27** replaced by I2C FRAM (I used Infineon, 1 Mbit / 128 KB I2C FRAM, SOIC-8). This direct
+  replacement is the only supported storage. You must use a watchdog enabled chip to use the watchdog functions.
   - grblHAL's settings keep the first 16 KB, as before; the recorder uses the
     space after them.
   - At start-up the recorder checks the chip is that FRAM and leaves it alone
@@ -86,19 +86,19 @@ stream stops. Open source (GPLv3, like grblHAL).
 
 ## Layout
 
-plugin/                 the grblHAL plugin
-  flight_recorder.c/h     record, stream-loss retract, $ commands, settings
-  event_log.c/h           the event log
-  storage_fram.c          the A7's FRAM (checked at start-up), reset cause, watchdog
-  storage_file.c          a host file (simulator)
-  library.json            PlatformIO library (FRAM storage only)
+ plugin/                 the grblHAL plugin
+-  flight_recorder.c/h     record, stream-loss retract, $ commands, settings
+-  event_log.c/h           the event log
+-  storage_fram.c          the A7's FRAM (checked at start-up), reset cause, watchdog
+-  storage_file.c          a host file (simulator)
+-  library.json            PlatformIO library (FRAM storage only)
 core/                   grblHAL core patches
-  executing-line.patch    report the line the steppers are executing
-  plugin-init.patch       start the recorder (firmware builds)
-  modbus-stats.patch      read the Modbus driver's error counters (firmware builds)
+-  executing-line.patch    report the line the steppers are executing
+-  plugin-init.patch       start the recorder (firmware builds)
+-  modbus-stats.patch      read the Modbus driver's error counters (firmware builds)
 firmware/               board firmware: Expatria's builds plus the recorder
-  flexihal-a7/            Flexi-HAL A7 (STM32F446), UF2 for Expatria's bootloader
-docs/COMMANDS.md        $ commands, record, settings, alarm, how to resume
+-  flexihal-a7/            Flexi-HAL A7 (STM32F446), UF2 for Expatria's bootloader
+- docs/COMMANDS.md        $ commands, record, settings, alarm, how to resume
 tools/                  test sender, simulator harness, evidence scripts
 evidence/               simulator runs: programs, results, plots
 ```
