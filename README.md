@@ -1,5 +1,9 @@
 # Flight-Recorder
 
+This project adds a flight recorder to GRBLHAL to allow for safe project stops and resumes in the event of communication failure between sender and controller, or controller freeze. It is currently working on PNC's, but the below warnings apply. Please use the I2C fix branch firmware and report any issues. 
+
+It is supported by [Bearsender](https://bisonactual.github.io/bearsender/bearsender.html) and will be supported by Bearcam on release, along with the full scurve and lookahead functions which are not yet available.
+
 This addon is highly experimental, requires hardware changes, and only currently supports the Flexihal-A7 by Expatria. It very likely voids any warranty or customer support from Expatria. Use at your own risk.
 
 This is part one of my changes, and does not include a spool. It adds a flight recorder that saves the position of your program every move, and in the event of communication loss with the sender, retracts and stops the spindle, and allows you to restore it from a supported sender (currently my fork of flexisender.... soon) - it also adds an event log to diagnose EMI etc.
