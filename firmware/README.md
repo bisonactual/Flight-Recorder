@@ -38,7 +38,9 @@ Each variant adds to Expatria's build:
   two fixes to Expatria's I2C, below.
 
 The variants are written out in `flexihal-a7/platformio.local.ini`, which
-`build.sh` copies into the driver.
+`build.sh` copies into the driver. Each also has a `_nokeypad` build, for
+diagnosis only: the same firmware without the I2C keypad plugin. If FRAM
+writes still fail with it, the trouble on the bus isn't the keypad.
 
 ### Building
 
@@ -50,6 +52,7 @@ inside a venv). Linux, macOS or WSL:
 firmware/flexihal-a7/build.sh list                                   # the variants
 firmware/flexihal-a7/build.sh f446re_flexi_cnc_printnc_eth_sd_fr     # one
 firmware/flexihal-a7/build.sh                                        # all six
+firmware/flexihal-a7/build.sh f446re_flexi_cnc_printnc_eth_sd_fr_nokeypad   # a diagnostic build
 ```
 
 The driver is checked out under `firmware/build/` (or `$FR_BUILD_DIR`); UF2

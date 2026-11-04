@@ -3,8 +3,8 @@
 # with the recorder added, as UF2 files for their bootloader, the same as their releases.
 #
 # Usage: firmware/flexihal-a7/build.sh [variant ...]
-#   no arguments  every variant
-#   list          show the variants
+#   no arguments  every variant we release (not the _nokeypad diagnostic builds)
+#   list          show the variants, the diagnostic builds too
 #   variant       e.g. f446re_flexi_cnc_printnc_eth_sd_fr
 #
 # Needs git, python3 and PlatformIO (pio) on PATH. The driver is checked out under
@@ -20,6 +20,7 @@ driver=$build/STM32F4xx
 out=$here/out
 
 all=$(sed -n 's/^\[env:\(.*\)\]$/\1/p' "$here/platformio.local.ini")
+releases=$(grep -v '_nokeypad$' <<< "$all")
 if [ "${1:-}" = list ]; then
     echo "$all"
     exit 0
@@ -64,7 +65,7 @@ cp "$here/platformio.local.ini" "$driver/platformio.local.ini"
 
 variants=("$@")
 if [ ${#variants[@]} -eq 0 ]; then
-    mapfile -t variants <<< "$all"
+    mapfile -t variants <<< "$releases"
 fi
 
 # 5. Build. Expatria's post-build script writes FLEXI_HAL_<variant>_<driver version>.uf2
