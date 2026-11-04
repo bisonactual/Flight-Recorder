@@ -30,6 +30,10 @@ Each variant adds to Expatria's build:
 - `core/executing-line.patch`, `core/plugin-init.patch` and
   `core/modbus-stats.patch` on the grblHAL core (the last only lets the
   event log read the Modbus driver's own error counters);
+- `core/rapid-levels.patch`: two more rapid override levels, 75% on `0xAE`
+  and 10% on `0xAF`. `0x95`, `0x96` and `0x97` still give 100, 50 and 25%.
+  Firmware without the patch ignores the two codes. (Upstream grblHAL has
+  since given `0x98` to a 5% level; we leave it alone.)
 - `flexihal-a7/patches/i2c-wait-ready.patch` and `keypad-strobe-task.patch`:
   two fixes to Expatria's I2C, below.
 
