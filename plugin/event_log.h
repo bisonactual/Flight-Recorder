@@ -39,7 +39,7 @@ typedef enum {
     FR_Event_Link,          // code: link flags (fr_link_t), data: stream type
     FR_Event_Modbus,        // data, per second: timeouts | CRC errors << 8 | exceptions << 16 | retries << 24
     FR_Event_Job,           // code: record state (fr_state_t), data: line, or the job id at start
-    FR_Event_Storage,       // data: storage writes that failed before this one worked
+    FR_Event_Storage,       // data: storage writes that failed since the last one, code: how many failed again when retried (stops at 255)
     FR_Event_SpindleOff     // code: why, at boot (fr_boot_stop_t). Keep this one last, event_log.c checks the range
 } fr_event_type_t;
 
@@ -78,7 +78,8 @@ typedef struct {
 void fr_log_init (uint32_t boot, uint8_t reset_cause, uint8_t job_state);
 void fr_log_event (fr_event_type_t type, uint8_t code, uint32_t data);
 void fr_log_poll (uint32_t now);
-void fr_log_storage_result (bool ok);
+bool fr_log_write (uint32_t addr, const void *data, uint32_t size);   // every write of the recorder's, retried once
+bool fr_log_writing (void);                                           // one of those is under way
 void fr_log_report (uint32_t count);
 void fr_log_clear (void);
 

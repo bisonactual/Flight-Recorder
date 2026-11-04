@@ -45,10 +45,13 @@ if ! git -C "$driver/rgb" cat-file -e "$RGB_COMMIT^{commit}" 2>/dev/null; then
 fi
 git -C "$driver/rgb" checkout -q -f "$RGB_COMMIT"
 
-# 2. Our patches to the core (executing line, plugin start-up, Modbus counters) and the status light plugin.
+# 2. Our patches to the core (executing line, plugin start-up, Modbus counters), the driver's
+#    I2C wait, the keypad's key read and the status light plugin.
 git -C "$driver/grbl" apply "$root/core/executing-line.patch"
 git -C "$driver/grbl" apply "$root/core/plugin-init.patch"
 git -C "$driver/grbl" apply "$root/core/modbus-stats.patch"
+git -C "$driver" apply "$here/patches/i2c-wait-ready.patch"
+git -C "$driver/keypad" apply "$here/patches/keypad-strobe-task.patch"
 git -C "$driver/rgb" apply "$here/patches/rgb-bit-count.patch"
 
 # 3. The plugin, as a PlatformIO library next to Expatria's.

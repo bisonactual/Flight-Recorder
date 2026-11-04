@@ -1,0 +1,25 @@
+diff --git a/keypad.c b/keypad.c
+index 0f172a2..8d17658 100644
+--- a/keypad.c
++++ b/keypad.c
+@@ -829,12 +829,19 @@ ISR_CODE static void ISR_FUNC(i2c_enqueue_keycode)(char c)
+     }
+ }
+ 
++// Reading the key is an I2C transfer, so it runs from the main loop with the other
++// transfers rather than from the strobe interrupt, possibly in the middle of one.
++static void i2c_get_key (void *data)
++{
++    i2c_get_keycode(KEYPAD_I2CADDR, i2c_enqueue_keycode);
++}
++
+ ISR_CODE bool ISR_FUNC(keypad_strobe_handler)(uint_fast8_t id, bool keydown)
+ {
+     keyreleased = !keydown;
+ 
+     if(keydown){
+-        i2c_get_keycode(KEYPAD_I2CADDR, i2c_enqueue_keycode);
++        task_add_immediate(i2c_get_key, NULL);
+     }
+ 
+     else if(jogging) {
