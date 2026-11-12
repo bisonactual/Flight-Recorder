@@ -22,38 +22,35 @@
 */
 
 /*
-  FLIGHT.DAT in the simulator's working directory stands in for the FRAM.
-  Every write is flushed straight away, so it survives the simulator being
-  killed, which is how the evidence runs cut the power.
+  FLIGHT.DAT in the simulator's working directory stands in for the FRAM, with
+  the same layout. Every write is flushed straight away, so it survives the
+  simulator being killed, which is how the evidence runs cut the power.
+
+  Started with -F, the simulator has no FRAM fitted, and the recorder goes on
+  to the SD card (-d).
 */
+
+#include "driver.h"
+
+#if FLIGHT_RECORDER_ENABLE
 
 #include <stdio.h>
 #include <string.h>
 
-#include "flight_recorder.h"
+#include "storage.h"
 #include "event_log.h"
 
 #define STORAGE_FILE "FLIGHT.DAT"
 
 static FILE *file = NULL;
 
-// The simulated processor has no reset flags and no watchdog.
-uint8_t fr_reset_cause (void)
+static bool file_init (void)
 {
-    return 0;
-}
+    extern bool sim_fram_fitted (void);
 
-void fr_watchdog_start (uint32_t seconds)
-{
-    (void)seconds;
-}
+    if(!sim_fram_fitted())
+        return false;
 
-void fr_watchdog_feed (void)
-{
-}
-
-bool fr_storage_init (void)
-{
     if(!(file = fopen(STORAGE_FILE, "r+b")))
         file = fopen(STORAGE_FILE, "w+b");
 
@@ -61,7 +58,7 @@ bool fr_storage_init (void)
 }
 
 // Anything never written reads back as 0xFF, like erased storage.
-bool fr_storage_read (uint32_t addr, void *data, uint32_t size)
+static bool file_read (uint32_t addr, void *data, uint32_t size)
 {
     if(!file || fseek(file, (long)addr, SEEK_SET))
         return false;
@@ -73,10 +70,27 @@ bool fr_storage_read (uint32_t addr, void *data, uint32_t size)
     return true;
 }
 
-bool fr_storage_write (uint32_t addr, const void *data, uint32_t size)
+static bool file_write (uint32_t addr, const void *data, uint32_t size)
 {
     return file &&
             fseek(file, (long)addr, SEEK_SET) == 0 &&
              fwrite(data, 1, size, file) == size &&
               fflush(file) == 0;
 }
+
+const fr_backend_t fr_storage_file = {
+    .info = {
+        .label = NULL,
+        .record_stride = 64,
+        .log_header = FR_LOG_BASE,
+        .log_entries = FR_LOG_BASE + 16,
+        .log_slots = FR_LOG_EVENTS,
+        .record_interval = 20,
+        .batch_events = false
+    },
+    .init = file_init,
+    .read = file_read,
+    .write = file_write
+};
+
+#endif // FLIGHT_RECORDER_ENABLE

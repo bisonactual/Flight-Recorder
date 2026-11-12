@@ -25,8 +25,9 @@ numbered lines (G54, a move to X10 Y10 Z-1, spindle on), then:
                   Stopped. Needs a simulator built with a short limit
                   (-DFR_RETRACT_LIMIT=15000u).
 
-Usage: focused.py <scenario> --sim <binary> --run <dir>. Prints the checks as
-JSON and exits with 1 if any of them failed.
+Usage: focused.py <scenario> --sim <binary> --run <dir> [--sd]. Prints the checks
+as JSON and exits with 1 if any of them failed. --sd runs it on the simulator's SD
+card instead of its FRAM stand-in.
 """
 
 import argparse
@@ -85,13 +86,15 @@ def main():
     parser.add_argument("scenario", choices=SCENARIOS)
     parser.add_argument("--sim", required=True)
     parser.add_argument("--run", required=True)
+    parser.add_argument("--sd", action="store_true", help="record on the SD card (no FRAM)")
+    parser.add_argument("--speed", type=float, default=4.0, help="simulator speed; m0 needs 1 on a busy host")
     args = parser.parse_args()
 
     scenario = args.scenario
     job = f"{0xAA00 + SCENARIOS.index(scenario):08X}"
     result = {"scenario": scenario, "commands": []}
     checks = {}
-    sim = Sim(args.sim, args.run, speed=4).start()
+    sim = Sim(args.sim, args.run, speed=args.speed, sd=args.sd).start()
     link = None
 
     def send(text, timeout=10):

@@ -109,10 +109,12 @@ def main():
     parser.add_argument("--resume-via", choices=["ws", "usb"], default=None)
     parser.add_argument("--at", type=float, default=0.4, help="interrupt after this fraction of the lines")
     parser.add_argument("--speed", type=float, default=4.0)
+    parser.add_argument("--sd", action="store_true", help="record on the SD card (no FRAM)")
     args = parser.parse_args()
 
-    summary = {"scenario": args.scenario, "via": args.via, "speed": args.speed, "g54": G54}
-    sim = Sim(args.sim, args.run, speed=args.speed).start()
+    summary = {"scenario": args.scenario, "via": args.via, "speed": args.speed, "g54": G54,
+               "storage": "sd" if args.sd else "fram"}
+    sim = Sim(args.sim, args.run, speed=args.speed, sd=args.sd).start()
     log = open(os.path.join(args.run, "sender.jsonl"), "w", buffering=1)  # line buffered, so it survives the run cap
     try:
         link = open_link(sim.usb if args.via == "usb" else sim.ws)

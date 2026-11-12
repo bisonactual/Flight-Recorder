@@ -22,11 +22,14 @@
 */
 
 /*
-  The record lives in non-volatile memory (FRAM on the Flexi-HAL A7) and holds
-  the line number the steppers are executing, the machine position, tool and
-  work offset, and why the job stopped. A sender can resume a job from it after
-  the PC, the link or the controller has gone away. The line number comes from
-  core/executing-line.patch, so it is never ahead of the machine.
+  The record lives in non-volatile memory (FRAM on the Flexi-HAL A7, or the SD
+  card in the uFlexiNET module) and holds the line number the steppers are
+  executing, the machine position, tool and work offset, and why the job
+  stopped. A sender can resume a job from it after the PC, the link or the
+  controller has gone away. The line number comes from
+  core/executing-line.patch, so it is never ahead of the machine. While the
+  line changes it is written at most every $794 ms (0: 20 on FRAM, 100 on an
+  SD card); a change of state goes out at once.
 
   If the sender stops feeding a job while the spindle is on, the machine goes
   idle with the tool sitting in the cut. After $791 seconds of that, or straight
@@ -69,6 +72,7 @@
 #include "grbl/alarms.h"
 #include "grbl/report.h"
 #include "grbl/spindle_control.h"
+#include "grbl/task.h"
 
 #include "flight_recorder.h"
 #include "event_log.h"
@@ -77,20 +81,24 @@
 #define SETTING_TIMEOUT         791
 #define SETTING_RETRACT_DEPTH   792
 #define SETTING_WATCHDOG        793
+#define SETTING_RECORD_INTERVAL 794
 
 #define ALARM_RETRACTED         ((alarm_code_t)80)
 #define ALARM_RETRACT_FAILED    ((alarm_code_t)81)
 
-#define WRITE_INTERVAL          20u         // ms between record writes while the line changes
+#define MIN_WRITE_INTERVAL      10u         // ms, the shortest $794 can ask for
 #ifndef FR_RETRACT_LIMIT                    // can be set shorter for a test build
 #define FR_RETRACT_LIMIT        120000u     // ms we give a retract before stopping the machine
 #endif
 
+// record_interval sits in what was padding before v0.4.0, so the saved settings still load and
+// it comes up 0, the storage's own interval.
 typedef struct {
     bool auto_retract;
     float timeout;          // s
     float retract_depth;    // mm below machine zero
     uint8_t watchdog;       // s, 0 = off. Only a setting in watchdog builds, but always here so the layout is the same
+    uint16_t record_interval; // ms between record writes while the line changes, 0 = the storage's default
 } recorder_settings_t;
 
 typedef enum {
@@ -108,6 +116,8 @@ static fr_record_t record;
 static uint32_t newest_slot = 0;
 static bool record_changed = false;
 static uint32_t last_write = 0;
+static uint32_t write_interval = 20;        // ms, $794 or the storage's default
+static uint8_t boot_reset_cause = 0;
 
 static uint32_t last_line = 0;
 static uint32_t starved_since = 0;
@@ -161,7 +171,8 @@ static bool is_valid_record (const fr_record_t *rec)
 
 // There are two copies and each write goes to the older one, so a power cut in the
 // middle of a write still leaves the previous record. If a write fails we try the
-// same slot again next time and never touch the newer copy.
+// same slot again next time and never touch the newer copy. (An SD card picks the
+// copy itself, as it finishes writes later: storage_sd.c.)
 static void write_record (void)
 {
     if(!have_storage)
@@ -171,7 +182,7 @@ static void write_record (void)
     record.seq++;
     record.crc = crc32((const uint8_t *)&record, offsetof(fr_record_t, crc));
 
-    bool ok = fr_storage_write((newest_slot ^ 1) * FR_SLOT_SIZE, &record, sizeof(fr_record_t));
+    bool ok = fr_storage_write((newest_slot ^ 1) * fr_storage_info()->record_stride, &record, sizeof(fr_record_t));
 
     fr_log_storage_result(ok);
     if(ok)
@@ -185,9 +196,10 @@ static bool load_record (void)
 {
     fr_record_t copy[2];
     bool valid[2];
+    uint32_t stride = fr_storage_info()->record_stride;
 
     for(uint_fast8_t i = 0; i < 2; i++)
-        valid[i] = fr_storage_read(i * FR_SLOT_SIZE, &copy[i], sizeof(fr_record_t)) && is_valid_record(&copy[i]);
+        valid[i] = fr_storage_read(i * stride, &copy[i], sizeof(fr_record_t)) && is_valid_record(&copy[i]);
 
     if(!(valid[0] || valid[1]))
         return false;
@@ -480,6 +492,7 @@ static void onExecuteRealtime (sys_state_t state)
     if(!have_storage)
         return;
 
+    fr_storage_poll();
     fr_log_poll(now);
 
     if(reset_pending) {
@@ -543,7 +556,7 @@ static void onExecuteRealtime (sys_state_t state)
         }
     }
 
-    if(record_changed && now - last_write >= WRITE_INTERVAL)
+    if(record_changed && now - last_write >= write_interval)
         write_record();
 }
 
@@ -708,6 +721,19 @@ static status_code_t cmd_events_clear (sys_state_t state, char *args)
     return Status_OK;
 }
 
+#if FR_SD_ENABLE
+
+// SD card storage only: how the card has been doing. $FLIGHTSD=R starts the counts again.
+static status_code_t cmd_flight_sd (sys_state_t state, char *args)
+{
+    if(args && !(args[0] == 'R' && args[1] == '\0'))
+        return Status_InvalidStatement;
+
+    return fr_storage_report(args != NULL) ? Status_OK : Status_InvalidStatement;
+}
+
+#endif
+
 #if FR_WATCHDOG_ENABLE
 
 // Hang the way a stuck controller would, until the watchdog resets the board.
@@ -731,6 +757,9 @@ static const sys_command_t flight_commands[] = {
     { "FLIGHTCLEAR", cmd_flight_clear, { .noargs = On }, { .str = "clear the flight record" } },
     { "EVENTS", cmd_events, { .allow_blocking = On }, { .str = "list the last 100 events; =<n> the last n" } },
     { "EVENTSCLEAR", cmd_events_clear, { .noargs = On }, { .str = "clear the event log" } },
+#if FR_SD_ENABLE
+    { "FLIGHTSD", cmd_flight_sd, { .allow_blocking = On }, { .str = "SD card storage: writes and times; =R starts the counts again" } },
+#endif
 #if FR_WATCHDOG_ENABLE
     { "WATCHDOGTEST", cmd_watchdog_test, { .noargs = On }, { .str = "hang until the watchdog resets the board" } },
 #endif
@@ -741,8 +770,13 @@ static void onReportOptions (bool newopt)
     if(on_report_options)
         on_report_options(newopt);
 
-    if(!newopt)
-        report_plugin(have_storage ? "Flight Recorder" : "Flight Recorder (no storage)", FR_VERSION);
+    if(!newopt) {
+        char name[40];
+        const char *label = have_storage ? fr_storage_info()->label : "no storage";
+        if(label)
+            snprintf(name, sizeof(name), "Flight Recorder (%s)", label);
+        report_plugin(label ? name : "Flight Recorder", FR_VERSION);
+    }
 }
 
 // Settings
@@ -753,13 +787,23 @@ static const setting_detail_t plugin_settings[] = {
     { SETTING_RETRACT_DEPTH, Group_General, "Retract below machine zero", "mm", Format_Decimal, "##0.0", "1", "500", Setting_NonCore, &config.retract_depth },
 #if FR_WATCHDOG_ENABLE
     // 3 to 10 s, or 0 for off. 1 and 2 are taken as 3. Takes effect at the next boot.
-    { SETTING_WATCHDOG, Group_General, "Watchdog timeout", "s", Format_Int8, "#0", "0", "10", Setting_NonCore, &config.watchdog }
+    { SETTING_WATCHDOG, Group_General, "Watchdog timeout", "s", Format_Int8, "#0", "0", "10", Setting_NonCore, &config.watchdog },
 #endif
+    // 0 for the storage's own, 20 ms on FRAM and 100 ms on an SD card. 1 to 9 are taken as 10.
+    { SETTING_RECORD_INTERVAL, Group_General, "Flight record write interval", "ms", Format_Int16, "###0", "0", "1000", Setting_NonCore, &config.record_interval }
 };
+
+static void set_write_interval (void)
+{
+    uint32_t interval = config.record_interval ? config.record_interval : (have_storage ? fr_storage_info()->record_interval : 20);
+
+    write_interval = interval < MIN_WRITE_INTERVAL ? MIN_WRITE_INTERVAL : interval;
+}
 
 static void plugin_settings_save (void)
 {
     hal.nvs.memcpy_to_nvs(nvs_address, (uint8_t *)&config, sizeof(config), true);
+    set_write_interval();
 }
 
 static void plugin_settings_restore (void)
@@ -768,6 +812,7 @@ static void plugin_settings_restore (void)
     config.timeout = 3.0f;
     config.retract_depth = 20.0f;
     config.watchdog = 5;
+    config.record_interval = 0;
     plugin_settings_save();
 }
 
@@ -775,7 +820,48 @@ static void plugin_settings_load (void)
 {
     if(hal.nvs.memcpy_from_nvs((uint8_t *)&config, nvs_address, sizeof(config), true) != NVS_TransferResult_OK)
         plugin_settings_restore();
+    set_write_interval();
 }
+
+// Once there is somewhere to keep it: load the record, note the boot, start the log.
+static void storage_ready (void)
+{
+    static sys_commands_t commands = {
+        .n_commands = sizeof(flight_commands) / sizeof(sys_command_t),
+        .commands = flight_commands
+    };
+
+    have_storage = true;
+    set_write_interval();
+
+    if(!load_record())
+        memset(&record, 0, sizeof(record));
+
+    // A record still Running at boot means the controller restarted in the middle of a job.
+    uint8_t state_at_boot = record.state;
+
+    record.boot++;
+    if(record.state == FR_Running) {
+        record.state = FR_Stopped;
+        record.reason = FR_Reason_Reboot;
+        spindle_stop_reason |= FR_BootStop_Job;
+    }
+    write_record();
+
+    fr_log_init(record.boot, boot_reset_cause, state_at_boot);
+    system_register_commands(&commands);
+}
+
+#if FR_SD_ENABLE
+
+// An SD card is only mounted once the drivers are up, after the plugins have started.
+static void storage_start_late (void *data)
+{
+    if(fr_storage_init(true))
+        storage_ready();
+}
+
+#endif
 
 void flight_recorder_init (void)
 {
@@ -797,44 +883,27 @@ void flight_recorder_init (void)
         .alarms = alarms
     };
 
-    static sys_commands_t commands = {
-        .n_commands = sizeof(flight_commands) / sizeof(sys_command_t),
-        .commands = flight_commands
-    };
-
     if(!(nvs_address = nvs_alloc(sizeof(config))))
         return;
 
     settings_register(&settings);
     alarms_register(&alarm_details);
 
-    uint8_t reset_cause = fr_reset_cause();
+    boot_reset_cause = fr_reset_cause();
 
     // A power-on sets the brown-out flag as well, so only count a brown-out on its own.
-    if(reset_cause & FR_Reset_Watchdog)
+    if(boot_reset_cause & FR_Reset_Watchdog)
         spindle_stop_reason |= FR_BootStop_Watchdog;
-    if((reset_cause & FR_Reset_BrownOut) && !(reset_cause & FR_Reset_PowerOn))
+    if((boot_reset_cause & FR_Reset_BrownOut) && !(boot_reset_cause & FR_Reset_PowerOn))
         spindle_stop_reason |= FR_BootStop_BrownOut;
 
-    if((have_storage = fr_storage_init())) {
-
-        if(!load_record())
-            memset(&record, 0, sizeof(record));
-
-        // A record still Running at boot means the controller restarted in the middle of a job.
-        uint8_t state_at_boot = record.state;
-
-        record.boot++;
-        if(record.state == FR_Running) {
-            record.state = FR_Stopped;
-            record.reason = FR_Reason_Reboot;
-            spindle_stop_reason |= FR_BootStop_Job;
-        }
-        write_record();
-
-        fr_log_init(record.boot, reset_cause, state_at_boot);
-        system_register_commands(&commands);
-    }
+    // FRAM, if it is fitted, as before. Otherwise an SD card, once grblHAL has it mounted.
+    if(fr_storage_init(false))
+        storage_ready();
+#if FR_SD_ENABLE
+    else
+        task_run_on_startup(storage_start_late, NULL);
+#endif
 
     on_execute_realtime = grbl.on_execute_realtime;
     grbl.on_execute_realtime = onExecuteRealtime;

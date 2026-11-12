@@ -42,6 +42,12 @@
   poll writes them out. If the same event comes again within a second it is
   counted in the existing entry instead of taking a new one, so a chattering
   switch or a burst of the same error doesn't wipe out the history.
+
+  On FRAM every event is written as it happens. An SD card batches them: the
+  events go into RAM and out to the card about once a second, with the header
+  written once per batch. Alarms, a lost link, resets and stream timeouts go
+  out at once, as does every start-up. Where the ring and its header are, and
+  how many slots it has, comes from the storage (fr_storage_info()).
 */
 
 // Before driver.h, see flight_recorder.c.
@@ -68,10 +74,9 @@
 #include "event_log.h"
 
 #define LOG_MAGIC       0x31474C46u     // "FLG1"
-#define LOG_HEADER      FR_LOG_BASE
-#define LOG_ENTRIES     (FR_LOG_BASE + 16)
 #define REPEAT_WINDOW   1000u           // ms
 #define MODBUS_PERIOD   1000u           // ms
+#define BATCH_PERIOD    1000u           // ms events wait in RAM, when the storage batches them
 
 // The inputs worth logging are the ones noise can trip. Probe contact, block delete,
 // single block and so on are just normal operation.
@@ -91,6 +96,13 @@ typedef struct {
 static bool log_ready = false;
 static log_header_t header;
 static uint16_t boot;
+
+// Where the log is, from the storage.
+static uint32_t log_header, log_entries;
+static uint16_t ring;                   // slots, FR_LOG_EVENTS or more. At most FR_LOG_EVENTS are reported
+static bool batching = false;
+static bool batch_pending = false;
+static uint32_t batch_since;
 
 // The last event written, kept so that repeats can be counted in it.
 static fr_event_t last_event;
@@ -136,22 +148,27 @@ void fr_log_storage_result (bool ok)
     }
 }
 
+// Without batching every write goes out at once (on FRAM it already has, flushing does nothing).
 static void write_header (void)
 {
     header.magic = LOG_MAGIC;
     header.check = crc8((const uint8_t *)&header, offsetof(log_header_t, check));
-    fr_log_storage_result(fr_storage_write(LOG_HEADER, &header, sizeof(log_header_t)));
+    fr_log_storage_result(fr_storage_write(log_header, &header, sizeof(log_header_t)));
+    if(!batching)
+        fr_storage_flush();
 }
 
 static void write_slot (uint16_t slot, fr_event_t *event)
 {
     event->check = crc8((const uint8_t *)event, offsetof(fr_event_t, check));
-    fr_log_storage_result(fr_storage_write(LOG_ENTRIES + slot * sizeof(fr_event_t), event, sizeof(fr_event_t)));
+    fr_log_storage_result(fr_storage_write(log_entries + slot * sizeof(fr_event_t), event, sizeof(fr_event_t)));
+    if(!batching)
+        fr_storage_flush();
 }
 
 static bool read_slot (uint16_t slot, fr_event_t *event)
 {
-    return fr_storage_read(LOG_ENTRIES + slot * sizeof(fr_event_t), event, sizeof(fr_event_t)) &&
+    return fr_storage_read(log_entries + slot * sizeof(fr_event_t), event, sizeof(fr_event_t)) &&
             event->type >= FR_Event_Boot && event->type <= FR_Event_SpindleOff &&
              event->check == crc8((const uint8_t *)event, offsetof(fr_event_t, check));
 }
@@ -166,15 +183,24 @@ static void rebuild_header (void)
 
     memset(&header, 0, sizeof(log_header_t));
 
-    for(uint16_t slot = 0; slot < FR_LOG_EVENTS; slot++) {
+    for(uint16_t slot = 0; slot < ring; slot++) {
         if(read_slot(slot, &event)) {
-            header.count++;
+            if(header.count < FR_LOG_EVENTS)
+                header.count++;
             if(!found || (int16_t)(event.index - header.next_index) >= 0) {
                 header.next_index = event.index + 1;
-                header.head = (slot + 1) % FR_LOG_EVENTS;
+                header.head = (slot + 1) % ring;
                 found = true;
             }
         }
+    }
+}
+
+static void note_batch (uint32_t now)
+{
+    if(!batch_pending) {
+        batch_pending = true;
+        batch_since = now;
     }
 }
 
@@ -184,6 +210,43 @@ static void flush_last_event (void)
         write_slot(last_slot, &last_event);
         last_changed = false;
         last_flushed = hal.get_elapsed_ticks();
+        if(batching)
+            note_batch(last_flushed);
+    }
+}
+
+// The batch goes out: the last event's repeat count, the header, and everything the
+// storage still has in RAM.
+static void flush_log (void)
+{
+    flush_last_event();
+    write_header();
+    fr_storage_flush();
+    batch_pending = false;
+}
+
+// What a power cut straight afterwards is most likely to be about doesn't wait for
+// the batch: alarms, a lost link, resets (and every start-up), and jobs stopping for
+// any of those or for a stream timeout.
+static bool is_urgent (fr_event_type_t type, uint8_t code, uint32_t data)
+{
+    switch(type) {
+
+        case FR_Event_Boot:
+        case FR_Event_Alarm:
+            return true;
+
+        case FR_Event_Link:
+            return !(code & FR_Link_Connected);
+
+        case FR_Event_Input:
+            return !!(data & ((control_signals_t){ .reset = On }).mask);
+
+        case FR_Event_Job:
+            return (code >> 4) != FR_Reason_None;
+
+        default:
+            return false;
     }
 }
 
@@ -197,10 +260,13 @@ static void append_event (fr_event_type_t type, uint8_t code, uint32_t data, uin
     write_slot(last_slot, &last_event);
 
     header.next_index++;
-    header.head = (header.head + 1) % FR_LOG_EVENTS;
+    header.head = (header.head + 1) % ring;
     if(header.count < FR_LOG_EVENTS)
         header.count++;
-    write_header();
+    if(batching)
+        note_batch(now);
+    else
+        write_header();
 
     have_last = true;
     last_seen = last_flushed = now;
@@ -246,6 +312,9 @@ void fr_log_event (fr_event_type_t type, uint8_t code, uint32_t data)
         last_changed = true;
     } else
         append_event(type, code, data, now);
+
+    if(batching && is_urgent(type, code, data))
+        flush_log();
 }
 
 // Where the events come from
@@ -357,6 +426,9 @@ void fr_log_poll (uint32_t now)
 
     if(last_changed && now - last_flushed >= REPEAT_WINDOW)
         flush_last_event();
+
+    if(batch_pending && now - batch_since >= BATCH_PERIOD)
+        flush_log();
 }
 
 // Reporting
@@ -473,7 +545,7 @@ void fr_log_report (uint32_t count)
         count = header.count;
 
     for(uint32_t i = 0; i < count; i++) {
-        uint16_t slot = (uint16_t)((header.head + FR_LOG_EVENTS - count + i) % FR_LOG_EVENTS);
+        uint16_t slot = (uint16_t)((header.head + ring - count + i) % ring);
         if(read_slot(slot, &event)) {
             describe_event(&event, text, sizeof(text));
             snprintf(line, sizeof(line), "[EVENT:%u|boot=%u|t=%lu.%03lu|%s|n=%u]", event.index, event.boot,
@@ -491,25 +563,33 @@ void fr_log_clear (void)
         return;
 
     header.head = header.count = 0;
-    write_header();
     have_last = last_changed = false;
+    write_header();
+    fr_storage_flush();
+    batch_pending = false;
 }
 
 void fr_log_init (uint32_t boot_count, uint8_t reset_cause, uint8_t job_state)
 {
     fr_event_t event;
+    const fr_storage_info_t *storage = fr_storage_info();
 
     boot = (uint16_t)boot_count;
+    log_header = storage->log_header;
+    log_entries = storage->log_entries;
+    ring = storage->log_slots;
+    batching = storage->batch_events;
 
-    if(!(fr_storage_read(LOG_HEADER, &header, sizeof(log_header_t)) && header.magic == LOG_MAGIC &&
+    if(!(fr_storage_read(log_header, &header, sizeof(log_header_t)) && header.magic == LOG_MAGIC &&
           header.check == crc8((const uint8_t *)&header, offsetof(log_header_t, check)) &&
-           header.head < FR_LOG_EVENTS && header.count <= FR_LOG_EVENTS))
+           header.head < ring && header.count <= FR_LOG_EVENTS))
         rebuild_header();
 
-    // If the power went between writing an event and its header, the event is there anyway, so take it.
-    if(read_slot(header.head, &event) && event.index == header.next_index) {
+    // If the power went between writing events and the header, the events are there anyway,
+    // so take them. On FRAM that is at most one; a batching SD card can have a batch.
+    for(uint16_t n = 0; n < ring && read_slot(header.head, &event) && event.index == header.next_index; n++) {
         header.next_index++;
-        header.head = (header.head + 1) % FR_LOG_EVENTS;
+        header.head = (header.head + 1) % ring;
         if(header.count < FR_LOG_EVENTS)
             header.count++;
     }

@@ -27,10 +27,20 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define FR_VERSION     "0.3.0"
+#define FR_VERSION     "0.4.0"
 #define FR_MAGIC       0x31524646u  // "FFR1", record layout version 1
-#define FR_SLOT_SIZE   64u          // the two copies are at 0 and FR_SLOT_SIZE
 #define FR_AXES        5
+
+// SD card storage, through grblHAL's SD card support. Only for cards on SPI.
+#ifndef FR_SD_ENABLE
+#if defined(GRBL_SIM)
+#define FR_SD_ENABLE 0              // the simulator's build sets it when it has its card model
+#elif SDCARD_ENABLE && !SDCARD_SDIO
+#define FR_SD_ENABLE 1
+#else
+#define FR_SD_ENABLE 0
+#endif
+#endif
 
 typedef enum {
     FR_Idle = 0,        // no job recorded, or cleared
@@ -80,10 +90,33 @@ typedef struct {
     uint32_t crc;               // CRC-32 of everything above
 } fr_record_t;
 
-// Storage, a byte addressed area that belongs to the recorder.
-bool fr_storage_init (void);
+// Storage, a byte addressed area that belongs to the recorder. Where things go in it,
+// and how often they are written, depends on the storage in use.
+typedef struct {
+    const char *label;          // added to the plugin's name in $I, NULL for none
+    uint32_t record_stride;     // the second copy of the record is this far after the first
+    uint32_t log_header;        // event log header
+    uint32_t log_entries;       // first event slot
+    uint16_t log_slots;         // slots in the event ring, FR_LOG_EVENTS or more
+    uint16_t record_interval;   // default ms between record writes while the line changes
+    bool batch_events;          // events wait in RAM and go out about once a second
+} fr_storage_info_t;
+
+// Picks the storage: FRAM if it is fitted, otherwise an SD card if one is in. The FRAM
+// is checked at start-up (late = false); the SD card can only be once grblHAL has
+// mounted it (late = true).
+bool fr_storage_init (bool late);
+const fr_storage_info_t *fr_storage_info (void);
 bool fr_storage_read (uint32_t addr, void *data, uint32_t size);
+// Never waits for the storage. An SD card takes the write later, in the background.
 bool fr_storage_write (uint32_t addr, const void *data, uint32_t size);
+// Writes out what is waiting in RAM (SD card). FRAM writes go straight through.
+void fr_storage_flush (void);
+// Background work, from the realtime poll.
+void fr_storage_poll (void);
+// $FLIGHTSD, for an SD card: write counts and times. Returns false if the storage has
+// nothing to report. reset starts the counts again.
+bool fr_storage_report (bool reset);
 
 const char *fr_state_name (uint8_t state);
 const char *fr_reason_name (uint8_t reason);
