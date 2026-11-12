@@ -47,7 +47,7 @@ Bish Bash Bosh.
 
 (Strongly suggest you bench test this instead of sticking it straight on a pnc. USE AT YOUR OWN RISK)
 
-### No FRAM? The uFlexiNET's SD card
+### Without the FRAM: the uFlexiNET's SD card
 
 If the board has the uFlexiNET module (network and micro-SD, on the 40-pin header), the recorder can keep its record on the SD card instead, no soldering. Flash one of the **`_FR_SD`** builds (`FLEXI_HAL_PRINTNC_ETH_SD_FR_SD_...uf2`, `..._4X_FR_SD_...`, `_WD` for the watchdog) and put a card in. `$I` shows `[PLUGIN:Flight Recorder (SD card) v0.4.0]`.
 
@@ -56,11 +56,11 @@ Use the `_FR_SD` builds on a board with the stock EEPROM at U27, never the plain
 - At the first boot the recorder makes `FLIGHT.DAT` on the card (8 MB, hidden, read only) and from then on writes its sectors directly, never through the file system. Your G-code files on the card are left alone.
 - The record is written at most every 100 ms while the line changes (FRAM: 20 ms, `$794` to change it). Events are written about once a second; alarms, a lost link, resets and stream timeouts at once. So a power cut can lose the last tenth of a second of record and the last second of minor events (an error reply, say).
 - It never waits for the card. Cards pause now and then (up to 250 ms is allowed), and that doesn't hold up the machine or the network, which shares the card's bus.
-- Use a good card: an industrial or high-endurance one (pSLC, with power-loss protection if you can get it), not a cheap one. A cheap card losing power mid-write can damage more than the sector it was writing. FRAM is still the most robust option.
+- Use a good card: an industrial or high-endurance one (pSLC, with power-loss protection if you can get it), not a cheap one. A cheap card losing power mid-write can damage more than the sector it was writing. FRAM is still the safer choice.
 - Don't swap the card with the board on: the recorder writes where `FLIGHT.DAT` was on the old card. Change cards, then reboot.
 - `$FLIGHTSD` shows how the card is doing; `apart=` should be 8192 or more (the two copies of the record and the log are 4 MB apart on the card, so a card that damages more than it was writing can't take them all).
 
-So far this has been tested in the simulator only (`evidence/SD.md`); hardware tests are next.
+So far it has only been tested in the simulator (`evidence/SD.md`). Hardware tests are next.
 
 
 In detail:

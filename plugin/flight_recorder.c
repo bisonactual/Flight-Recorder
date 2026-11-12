@@ -428,7 +428,8 @@ static enum { Watchdog_NotChecked = 0, Watchdog_Off, Watchdog_On } watchdog = Wa
 
 // grblHAL's waits (dwells, spin-up, and some of its own, such as the 100 ms after an
 // alarm) run this instead of the realtime poll. It feeds the watchdog, and keeps an SD
-// card's writes going: FRAM writes have already happened, an SD card's wait for the poll.
+// card's writes going: FRAM writes have already happened, but an SD card's writes wait
+// for the poll.
 static void onExecuteDelay (sys_state_t state)
 {
 #if FR_WATCHDOG_ENABLE

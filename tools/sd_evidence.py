@@ -8,8 +8,8 @@ tears the sector being written. Its trace (card.img.trace) has every write.
 
   power   power cuts at random points. Each cycle boots, streams a job and dies,
           either during its n-th card write (SIM_SD_CUT_AT, n picked at random)
-          or at a random moment. Before the next boot the image's two record
-          copies are read straight from the card image; the next boot must report
+          or at a random moment. Before the next boot the two record copies
+          are read straight from the card image; the next boot must report
           the newest valid one, never one older than the last record the card
           finished, and the card must still mount.
   pause   long card pauses (SIM_SD_PAUSE) during a dense job over WebSocket: how

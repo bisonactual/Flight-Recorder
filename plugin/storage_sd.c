@@ -38,19 +38,19 @@
     4 MiB      event log header, then the event ring: 33 sectors of 32 events (1056 slots)
     8 MiB      record copy 1
   Each copy has a sector of its own, so a torn write can only take one of
-  them. And the parts are 4 MiB apart, which puts them in different
-  allocation units of the card (4 MiB on most cards), so a card that rewrites
+  them. The parts are also 4 MiB apart, which puts them in different
+  allocation units of the card (4 MiB on most cards). So a card that rewrites
   more than the sector it is given, up to a whole unit, can't take both
   copies either, and a torn log write can't take one: the copy the card
-  finished last always survives (evidence/SD.md, measured with copy 0, the
-  header and the log packed together: a torn header write then took copy 0).
+  finished last always survives. (evidence/SD.md measured it with copy 0, the
+  header and the log packed together: a torn header write then took copy 0.)
 
   The ring is a sector longer than the 1000 events kept, because a sector the
   log moves into is started afresh rather than read in first. That drops the
   oldest events in it, and there are always 1024 or more left behind it.
 
   Never waiting for the card. An SD card can be busy for a long time after a
-  write, 250 ms is allowed and some cards take longer now and then, and
+  write (250 ms is allowed, and some cards take longer now and then), and
   FatFs would sit in the driver waiting for it with nothing else running. So:
     - writes only go into RAM here, and the realtime poll sends them to the
       card one sector at a time, when the card isn't busy;

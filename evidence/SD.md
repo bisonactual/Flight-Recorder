@@ -35,7 +35,7 @@ What it doesn't model: a real card's latency distribution, flash pages paired
 with earlier writes (MLC/TLC), the card's own mapping tables getting damaged,
 the W5500 actually sharing the bus. Those are for the hardware tests.
 
-## What was decided, and the measurements behind each choice
+## Choices, and the measurements behind them
 
 | Choice | Measured |
 |---|---|
@@ -72,8 +72,8 @@ before the sender had even connected, and the next boot still came up.
   newest valid copy, never one older than the card had finished, and the card
   mounted with FLIGHT.DAT every time. Three times the torn write had got the
   record's 56 bytes down before the cut (a "partial" tear past them), and the
-  boot rightly took that newer copy. A torn log sector left up to 12 events
-  unreadable (`[EVENT:?|...]`), never more than its sector.
+  boot took that newer copy, as it should. A torn log sector left up to 12
+  events unreadable (`[EVENT:?|...]`), never more than its sector.
 - **Unit tears:** with the parts 4 MiB apart nothing changed. Packed
   together, a torn write of the header, the log or a record took the whole
   unit and with it both copies (11 of 60); the first draft, with copy 0
@@ -98,11 +98,11 @@ WebSocket is the W5500, polled by grblHAL's foreground like here.
 | Card writes in the job | 113 | 130 | 8, then the machine hung |
 | Long pauses (≥ 100 ms) | 16, up to 248 ms | 0 | 1, 216 ms |
 | Disk calls that waited for a busy card | **0** | 0 | 8, up to 222 ms |
-| Realtime poll gap, longest (`$FLIGHTSD gap_max`) | 10 ms | 10 ms | — (hung) |
+| Realtime poll gap, longest (`$FLIGHTSD gap_max`) | 10 ms | 10 ms | n/a (hung) |
 | Status reply, p50 / p99 / max | 23 / 47 / 47 ms | 23 / 37 / 52 ms | 23 / 30 / 325 ms |
 | Machine idle mid-job | 0 | 0 | **359: hung at line 2** |
-| Record on the card, longest between updates | 345 ms | 118 ms | — |
-| Records replaced in RAM before they went out | 15 | 0 | — |
+| Record on the card, longest between updates | 345 ms | 118 ms | n/a |
+| Records replaced in RAM before they went out | 15 | 0 | n/a |
 
 With raw writes a 250 ms pause only makes the record on the card older (by
 up to one pause: 345 ms instead of the 100 ms interval); the newest record
@@ -194,9 +194,9 @@ scenario stopped on the same line.) `results/sd/resume-power-sd.json`.
   feed stops for that long mid-cut and goes on: a witness mark, not the hang
   above, since the reads happen in the main loop rather than inside a
   synchronize wait. How often depends on the card's pauses. If hardware test
-  7 shows it, the choice of what to do is the owner's (no record writes to
-  the card during a job from that card, or only on state changes, or a card
-  rule).
+  7 shows it, I'll decide what to do then: no record writes to the card
+  during a job from that card, only writes on state changes, or a rule about
+  the cards.
 - Anything else using the card during a job (an FTP upload, a WebUI file
   list) already holds grblHAL the same way without the recorder, and could
   hit the hang if it lands in a synchronize wait.
@@ -204,7 +204,7 @@ scenario stopped on the same line.) `results/sd/resume-power-sd.json`.
   damage the FAT or directory like any FatFs write.
 - Swapping cards with the board on.
 
-## Hardware tests owed (the owner's)
+## Hardware tests still to do
 
 On a Flexi-HAL with the uFlexiNET and the stock EEPROM at U27 (so no FRAM),
 flashing `FLEXI_HAL_PRINTNC_ETH_SD_FR_SD[_WD]` (not the plain `_FR` builds,
@@ -212,8 +212,8 @@ which take the chip at U27 for FRAM). Cards, at least one of each:
 
 | Class | Cards | Why |
 |---|---|---|
-| Industrial, pSLC, power-fail protected | Swissbit S-56u (or S-50u), Kingston Industrial (SDCIT2), SanDisk Industrial (SDSDQAF3) | what we'd recommend |
-| Consumer high endurance | Samsung PRO Endurance, SanDisk High/MAX Endurance, Kingston High Endurance | what people will actually buy |
+| Industrial, pSLC, power-fail protected | Swissbit S-56u (or S-50u), Kingston Industrial (SDCIT2), SanDisk Industrial (SDSDQAF3) | what I'd recommend |
+| Consumer high endurance | Samsung PRO Endurance, SanDisk High/MAX Endurance, Kingston High Endurance | what most people buy |
 | Ordinary consumer | SanDisk Ultra, Samsung EVO Select | the common case |
 | Cheap | an unbranded / multipack card | the worst case |
 
