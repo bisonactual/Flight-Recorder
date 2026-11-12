@@ -185,7 +185,6 @@ static void write_record (void)
 
     bool ok = fr_storage_write((newest_slot ^ 1) * fr_storage_info()->record_stride, &record, sizeof(fr_record_t));
 
-    fr_log_storage_result(ok);
     if(ok)
         newest_slot ^= 1;
 

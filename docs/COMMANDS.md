@@ -115,7 +115,7 @@ between polls, so several trips in a few milliseconds count as one.
 | `LINK` | `usb` / `network`, `connected` / `disconnected` | the sender's USB port opening or closing, a network client arriving or leaving |
 | `MODBUS` | `timeouts`, `crc` (errors), `exceptions`, `retries`, each up to 255 | once a second while the Modbus link (the VFD) has trouble |
 | `JOB` | `start` with `job=`; or the state (`Stopped`, `Retracted`, `Completed`), `why=` and `ln=` | the job record changing |
-| `STORAGE` | `failed_writes=` | FRAM or SD card writes that failed, logged once they work again |
+| `STORAGE` | `failed_writes=` | FRAM writes that failed, or sectors an SD card refused, logged once a write works again |
 | `SPINDLE_OFF` | `after=` job, watchdog, brown-out | at boot after an unexpected reset: a job was running, the watchdog fired, or the supply dipped. grblHAL switches the spindle and coolant off at every start; this records that it mattered. The board sends the stop again 2 s later, for a Modbus VFD that missed the first |
 
 Notes: the reset cause is read from the processor's reset flags as the

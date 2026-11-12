@@ -153,7 +153,7 @@ static void write_header (void)
 {
     header.magic = LOG_MAGIC;
     header.check = crc8((const uint8_t *)&header, offsetof(log_header_t, check));
-    fr_log_storage_result(fr_storage_write(log_header, &header, sizeof(log_header_t)));
+    fr_storage_write(log_header, &header, sizeof(log_header_t));
     if(!batching)
         fr_storage_flush();
 }
@@ -161,7 +161,7 @@ static void write_header (void)
 static void write_slot (uint16_t slot, fr_event_t *event)
 {
     event->check = crc8((const uint8_t *)event, offsetof(fr_event_t, check));
-    fr_log_storage_result(fr_storage_write(log_entries + slot * sizeof(fr_event_t), event, sizeof(fr_event_t)));
+    fr_storage_write(log_entries + slot * sizeof(fr_event_t), event, sizeof(fr_event_t));
     if(!batching)
         fr_storage_flush();
 }

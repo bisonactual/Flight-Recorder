@@ -78,6 +78,8 @@ typedef struct {
 void fr_log_init (uint32_t boot, uint8_t reset_cause, uint8_t job_state);
 void fr_log_event (fr_event_type_t type, uint8_t code, uint32_t data);
 void fr_log_poll (uint32_t now);
+// From the storage, for each write that reached it or didn't. Failures are counted and
+// logged as one STORAGE event once a write works again.
 void fr_log_storage_result (bool ok);
 void fr_log_report (uint32_t count);
 void fr_log_clear (void);

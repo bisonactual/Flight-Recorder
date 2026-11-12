@@ -118,7 +118,11 @@ static bool fram_read (uint32_t addr, void *data, uint32_t size)
 
 static bool fram_write (uint32_t addr, const void *data, uint32_t size)
 {
-    return transfer((uint16_t)(FRAM_BASE + addr), (void *)data, size, false);
+    bool ok = transfer((uint16_t)(FRAM_BASE + addr), (void *)data, size, false);
+
+    fr_log_storage_result(ok);
+
+    return ok;
 }
 
 // The same layout as before v0.4.0: record copies 64 bytes apart, the log from 0x400,

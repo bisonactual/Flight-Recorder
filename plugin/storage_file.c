@@ -72,10 +72,14 @@ static bool file_read (uint32_t addr, void *data, uint32_t size)
 
 static bool file_write (uint32_t addr, const void *data, uint32_t size)
 {
-    return file &&
-            fseek(file, (long)addr, SEEK_SET) == 0 &&
-             fwrite(data, 1, size, file) == size &&
-              fflush(file) == 0;
+    bool ok = file &&
+               fseek(file, (long)addr, SEEK_SET) == 0 &&
+                fwrite(data, 1, size, file) == size &&
+                 fflush(file) == 0;
+
+    fr_log_storage_result(ok);
+
+    return ok;
 }
 
 const fr_backend_t fr_storage_file = {

@@ -58,6 +58,10 @@
   event log asks, ahead of the header, so the header doesn't point at events
   that aren't on the card yet. Only reads wait for the card, at start-up and for
   $EVENTS.
+
+  A write counts as done once it is in RAM. What goes to the event log as failed
+  writes (STORAGE) are the sectors the card refuses, and writes that couldn't be
+  taken at all.
 */
 
 #include "driver.h"
@@ -264,6 +268,8 @@ static bool send_sector (int16_t index, const uint8_t *data)
         card.check = true;              // it may have taken some of it, so look before the next command
     }
 
+    fr_log_storage_result(ok);
+
     return ok;
 }
 
@@ -392,13 +398,15 @@ static bool sd_write (uint32_t addr, const void *data, uint32_t size)
     stats.writes++;
     if(!ok)
         stats.failed++;
+    fr_log_storage_result(ok);
 
     return ok;
 }
 
 #else
 
-static bool sd_write (uint32_t addr, const void *data, uint32_t size)
+// Takes a write into RAM, for the realtime poll to send. False if it can't.
+static bool take_write (uint32_t addr, const void *data, uint32_t size)
 {
     uint32_t offset = addr % SD_SECTOR;
     int16_t index = map_index(addr / SD_SECTOR);
@@ -418,7 +426,7 @@ static bool sd_write (uint32_t addr, const void *data, uint32_t size)
         memcpy(record.data, data, size);
         record.size = (uint8_t)size;
         record.pending = true;
-        return !failing;
+        return true;
     }
 
     if(index == (int16_t)SD_HEADER) {
@@ -427,7 +435,7 @@ static bool sd_write (uint32_t addr, const void *data, uint32_t size)
         memcpy(header.data, data, size);
         header.size = (uint8_t)size;
         header.dirty = true;
-        return !failing;
+        return true;
     }
 
     cache_t *c = cache_get(index, offset == 0);
@@ -446,7 +454,18 @@ static bool sd_write (uint32_t addr, const void *data, uint32_t size)
     if(dirty_sectors() > 1)
         flush_requested = true;
 
-    return !failing;
+    return true;
+}
+
+// How the card does with it is counted when the sector goes out (send_sector()).
+static bool sd_write (uint32_t addr, const void *data, uint32_t size)
+{
+    bool taken = take_write(addr, data, size);
+
+    if(!taken)
+        fr_log_storage_result(false);
+
+    return taken;
 }
 
 // The next thing for the card: the record, then the event sectors, oldest first, then the header.
