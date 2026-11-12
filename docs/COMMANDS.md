@@ -30,7 +30,7 @@ build and a card in). A sender should accept either. With neither it reports
 |---|---|---|
 | `$FLIGHT` | `[FLIGHT:...]` then `ok` | Report the record (any state, alarm included) |
 | `$FLIGHT=<job>[,<flags>]` | `[FLIGHT:...]` then `ok` | Start recording a job. Warns `[MSG:Flight recorder: Z not homed, ...]` if the auto retract can't work |
-| `$FLIGHTCLEAR` | `[FLIGHT:...]` then `ok` | Clear the record |
+| `$FLIGHTCLEAR` | `[FLIGHT:...]` then `ok` | Clear the record. Not while a job runs or retracts (`error:8`) |
 | `$EVENTS[=<n>]` | `[EVENT:...]` lines, oldest first, then `ok` | The last n events (default 100, up to 1000) |
 | `$EVENTSCLEAR` | `ok` | Clear the event log |
 | `$FLIGHTSD[=R]` | `[FLIGHTSD:...]` then `ok` | SD card storage only: how the card is doing (below). `=R` starts the counts again |

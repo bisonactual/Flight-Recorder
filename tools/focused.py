@@ -24,6 +24,9 @@ numbered lines (G54, a move to X10 Y10 Z-1, spindle on), then:
   hold-retract    a feed hold during the retract until it gives up. Alarm 81,
                   Stopped. Needs a simulator built with a short limit
                   (-DFR_RETRACT_LIMIT=15000u).
+  clear-midjob    $FLIGHTCLEAR during a move gets error:8 and the record stays
+                  Running. Then the client closes and the job is still
+                  retracted.
 
 Usage: focused.py <scenario> --sim <binary> --run <dir> [--sd]. Prints the checks
 as JSON and exits with 1 if any of them failed. --sd runs it on the simulator's SD
@@ -42,7 +45,8 @@ from simrun import Sim
 from stream import parse_flight
 
 SCENARIOS = ["dwell-descend", "numbered-jog", "partial-line", "resume-power", "reconnect", "reset-control",
-             "estop-retract", "reset-retract", "g20", "g91", "check", "m0", "hold-retract"]
+             "estop-retract", "reset-retract", "g20", "g91", "check", "m0", "hold-retract",
+             "clear-midjob"]
 
 WORK_X50 = -250.0       # machine X of work X50, where N4 goes in the reconnect scenario
 
@@ -247,6 +251,19 @@ def main():
             record, _ = read_record("after")
             checks["alarm 81"] = "ALARM:81" in messages
             checks["stopped"] = bool(record) and record["state"] == "Stopped"
+
+        elif scenario == "clear-midjob":
+            send("N4G1X50F400")
+            reply = send("$FLIGHTCLEAR")
+            record, _ = read_record("during")
+            checks["clear refused"] = "error:8" in reply
+            checks["still running"] = bool(record) and record["state"] == "Running"
+            link.close()
+            link = open_link(sim.usb)
+            skip_greeting(link, 0.3)
+            wait_until(link, in_alarm)
+            record, _ = read_record("after")
+            checks["retracted"] = bool(record) and record["state"] == "Retracted"
     finally:
         if link:
             try:

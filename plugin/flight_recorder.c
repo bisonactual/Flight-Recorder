@@ -705,6 +705,11 @@ static status_code_t cmd_flight (sys_state_t state, char *args)
 
 static status_code_t cmd_flight_clear (sys_state_t state, char *args)
 {
+    // Not during a job or a retract. Clearing the record would stop the recorder
+    // watching the job, and the retract with it.
+    if(record.state == FR_Running || retract_phase != Retract_Idle)
+        return Status_IdleError;
+
     memset(&record.mpos, 0, sizeof(record.mpos));
     record.state = FR_Idle;
     record.reason = FR_Reason_None;
