@@ -95,13 +95,10 @@
 #define SD_ATTRIBUTES   (AM_RDO|AM_HID|AM_SYS)
 #define SD_LOG_SECTORS  33u
 
-#ifndef FR_SD_SPREAD
-#define FR_SD_SPREAD    (4u * 1024u * 1024u)    // between the parts, 0 packs them together for comparison
-#endif
-
-#define SD_HEADER_AT    (FR_SD_SPREAD ? FR_SD_SPREAD : SD_SECTOR)
+#define SD_SPREAD       (4u * 1024u * 1024u)    // between the parts
+#define SD_HEADER_AT    SD_SPREAD
 #define SD_LOG_AT       (SD_HEADER_AT + SD_SECTOR)
-#define SD_COPY1_AT     (FR_SD_SPREAD ? 2u * FR_SD_SPREAD : SD_LOG_AT + SD_LOG_SECTORS * SD_SECTOR)
+#define SD_COPY1_AT     (2u * SD_SPREAD)
 #define SD_FILE_SIZE    (SD_COPY1_AT + SD_SECTOR)
 
 // The sectors we use, by index: copy 0, the header, the log's 33, copy 1.
@@ -115,10 +112,6 @@
 #define SD_STUCK        1000u       // ms busy after which the card counts as failing
 #define SD_PAUSE        100u        // ms busy that counts as a long pause in the stats
 #define SD_READ_WAIT    500u        // ms a read waits for the card to finish a write
-
-#ifndef FR_SD_FATFS_WRITES
-#define FR_SD_FATFS_WRITES 0        // 1 writes through f_write and f_sync instead, for comparison
-#endif
 
 #if FF_FS_TINY
 #error "The flight recorder's SD card storage needs FatFs with FF_FS_TINY 0"
@@ -218,8 +211,6 @@ static uint32_t sectors_apart (uint_fast8_t a, uint_fast8_t b)
 
 // The card
 
-#if !FR_SD_FATFS_WRITES
-
 // Notes when the card has finished the sector it was sent, and says if it is still busy.
 static bool card_busy (void)
 {
@@ -279,19 +270,15 @@ static bool send_sector (int16_t index, const uint8_t *data)
     return ok;
 }
 
-#endif // !FR_SD_FATFS_WRITES
-
 // Reads wait for the card to finish any write. Only at start-up and for $EVENTS.
 static bool wait_idle (void)
 {
-#if !FR_SD_FATFS_WRITES
     uint32_t start = hal.get_elapsed_ticks();
 
     while(card_busy()) {
         if(hal.get_elapsed_ticks() - start >= SD_READ_WAIT)
             return false;
     }
-#endif
 
     return true;
 }
@@ -307,8 +294,6 @@ static bool read_sector (int16_t index, uint8_t *data)
 
     return ok;
 }
-
-#if !FR_SD_FATFS_WRITES
 
 // Event sectors in RAM
 
@@ -351,8 +336,6 @@ static uint_fast8_t dirty_sectors (void)
     return n;
 }
 
-#endif // !FR_SD_FATFS_WRITES
-
 // Storage interface
 
 static bool sd_read (uint32_t addr, void *data, uint32_t size)
@@ -363,7 +346,6 @@ static bool sd_read (uint32_t addr, void *data, uint32_t size)
     if(!ready || index < 0 || offset + size > SD_SECTOR)
         return false;
 
-#if !FR_SD_FATFS_WRITES
     // Event sectors come from RAM if they are there, and stay there.
     if(index >= (int16_t)SD_LOG_FIRST && index < (int16_t)SD_COPY1_INDEX) {
         cache_t *c = cache_get(index, false);
@@ -378,38 +360,13 @@ static bool sd_read (uint32_t addr, void *data, uint32_t size)
     if(index == (int16_t)SD_HEADER && header.dirty) {
         memset(tx, 0xFF, SD_SECTOR);
         memcpy(tx, header.data, header.size);
-    } else
-#endif
-    if(!read_sector(index, tx))
+    } else if(!read_sector(index, tx))
         return false;
 
     memcpy(data, tx + offset, size);
 
     return true;
 }
-
-#if FR_SD_FATFS_WRITES
-
-// Comparison builds only: every write goes through FatFs and waits for the card.
-static FIL file;
-
-static bool sd_write (uint32_t addr, const void *data, uint32_t size)
-{
-    UINT written;
-    uint32_t start = micros();
-    bool ok = ready && f_lseek(&file, addr) == FR_OK && f_write(&file, data, size, &written) == FR_OK &&
-               written == size && f_sync(&file) == FR_OK;
-    blocked_since(start);
-
-    stats.writes++;
-    if(!ok)
-        stats.failed++;
-    fr_log_storage_result(ok);
-
-    return ok;
-}
-
-#else
 
 // Takes a write into RAM, for the realtime poll to send. False if it can't.
 static bool take_write (uint32_t addr, const void *data, uint32_t size)
@@ -520,8 +477,6 @@ static void send_next (void)
     flush_requested = false;
 }
 
-#endif // FR_SD_FATFS_WRITES
-
 static void sd_flush (void)
 {
     flush_requested = true;
@@ -538,12 +493,10 @@ static void sd_poll (void)
         stats.gap_max = now - last_poll;
     last_poll = now;
 
-#if !FR_SD_FATFS_WRITES
     if(card_busy() || (failing && (int32_t)(now - retry_at) < 0))
         return;
 
     send_next();
-#endif
 }
 
 static void sd_report (bool reset)
@@ -597,11 +550,7 @@ static bool make_file (void)
     ok = ok && f_lseek(&f, SD_COPY1_AT) == FR_OK && f_write(&f, tx, SD_SECTOR, &written) == FR_OK &&
           written == SD_SECTOR && f_tell(&f) == SD_FILE_SIZE;
 
-    ok = f_close(&f) == FR_OK && ok;
-
-#if !FR_SD_FATFS_WRITES
-    ok = ok && f_chmod(SD_PATH, SD_ATTRIBUTES, SD_ATTRIBUTES) == FR_OK;
-#endif
+    ok = f_close(&f) == FR_OK && ok && f_chmod(SD_PATH, SD_ATTRIBUTES, SD_ATTRIBUTES) == FR_OK;
 
     return ok;
 }
@@ -668,7 +617,6 @@ static void card_mounted (void)
         return;
     }
 
-#if !FR_SD_FATFS_WRITES
     // The write that was going out may not have got there, so send all that RAM holds again.
     card.busy = card.check = failing = false;
     record.pending = record.known;
@@ -680,7 +628,6 @@ static void card_mounted (void)
         }
     }
     flush_requested = true;
-#endif
 
     ready = true;
 
@@ -721,12 +668,6 @@ static bool sd_init (void)
         return false;
     }
 
-#if FR_SD_FATFS_WRITES
-    f_chmod(SD_PATH, 0, SD_ATTRIBUTES);
-    if(f_open(&file, SD_PATH, FA_READ|FA_WRITE) != FR_OK)
-        return false;
-#endif
-
     for(cache_t *c = cache; c < cache + SD_CACHE; c++)
         c->index = -1;
 
@@ -748,11 +689,7 @@ const fr_backend_t fr_storage_sd = {
         .log_entries = SD_LOG_AT,
         .log_slots = SD_LOG_SECTORS * (SD_SECTOR / sizeof(fr_event_t)),
         .record_interval = 100,
-#ifdef FR_SD_BATCH_EVENTS
-        .batch_events = FR_SD_BATCH_EVENTS,     // 0 for the comparison build without batching
-#else
-        .batch_events = true,
-#endif
+        .batch_events = true
     },
     .init = sd_init,
     .read = sd_read,

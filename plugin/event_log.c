@@ -150,22 +150,17 @@ void fr_log_storage_result (bool ok)
     }
 }
 
-// Without batching each write goes out at once. On FRAM it already has and the flush does nothing.
 static void write_header (void)
 {
     header.magic = LOG_MAGIC;
     header.check = crc8((const uint8_t *)&header, offsetof(log_header_t, check));
     fr_storage_write(log_header, &header, sizeof(log_header_t));
-    if(!batching)
-        fr_storage_flush();
 }
 
 static void write_slot (uint16_t slot, fr_event_t *event)
 {
     event->check = crc8((const uint8_t *)event, offsetof(fr_event_t, check));
     fr_storage_write(log_entries + slot * sizeof(fr_event_t), event, sizeof(fr_event_t));
-    if(!batching)
-        fr_storage_flush();
 }
 
 static bool read_slot (uint16_t slot, fr_event_t *event)
