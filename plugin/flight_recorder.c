@@ -29,7 +29,8 @@
   controller has gone away. The line number comes from
   core/executing-line.patch, so it is never ahead of the machine. While the
   line changes it is written at most every $794 ms, by default 20 on FRAM and
-  100 on an SD card. A change of state is written at once.
+  100 on an SD card. A job start, a stream loss, a reset and the retract are
+  written at once. An alarm stop and the program end go with the next write.
 
   If the sender stops feeding a job while the spindle is on, the machine goes
   idle with the tool sitting in the cut. After $791 seconds of that, or straight

@@ -63,9 +63,11 @@ status report (`?`) meanwhile.
 A `Running` record found at boot becomes `Stopped`, `why=reboot`.
 
 While the line changes the record is written at most every `$794` ms, by
-default 20 on FRAM and 100 on an SD card. A change of state (start, stop,
-retract, end) is written at once. A power cut loses at most that interval of
-progress, so `ln` can be a few lines behind the one cutting, but not ahead.
+default 20 on FRAM and 100 on an SD card. A job start, a stream loss, a reset
+and the retract are written at once. A stop for an alarm and the program end
+go with the next write, within `$794` ms. A power cut loses at most that
+interval of progress, so `ln` can be a few lines behind the one cutting, but
+not ahead.
 
 `ln` comes from the steppers; `tool`, `wcs`, `flags` and `mpos` from the
 controller's state when it was written, which can already include a line
