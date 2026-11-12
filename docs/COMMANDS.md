@@ -5,7 +5,7 @@ the SD card in the uFlexiNET module; a file or an emulated card in the
 simulator). It survives the PC, the link and the controller going away. This
 page is the whole interface.
 
-`$I` reports `[PLUGIN:Flight Recorder v0.4.0]` when it's running on FRAM, and
+`$I` reports `[PLUGIN:Flight Recorder v0.4.0-sd]` when it's running on FRAM, and
 `Flight Recorder (SD card)` when it's on the SD card (no FRAM fitted, a `_fr_sd`
 build and a card in). A sender should accept either. With neither it reports
 `Flight Recorder (no storage)`, and these commands are not available.

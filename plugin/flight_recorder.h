@@ -27,7 +27,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define FR_VERSION     "0.4.0"
+#define FR_VERSION     "0.4.0-sd"
 #define FR_MAGIC       0x31524646u  // "FFR1", record layout version 1
 #define FR_AXES        5
 
