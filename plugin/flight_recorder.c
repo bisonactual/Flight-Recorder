@@ -143,7 +143,7 @@ static on_program_completed_ptr on_program_completed;
 static on_reset_ptr on_reset;
 static on_stream_changed_ptr on_stream_changed;
 static on_report_options_ptr on_report_options;
-#if FR_WATCHDOG_ENABLE
+#if FR_WATCHDOG_ENABLE || FR_SD_ENABLE
 static on_execute_realtime_ptr on_execute_delay;
 #endif
 static stream_read_ptr stream_read;
@@ -421,16 +421,29 @@ static uint8_t spindle_stop_reason = 0;     // fr_boot_stop_t bits
 static uint32_t spindle_stop_again = 0;     // when to send the stop again, 0 until logged
 
 #if FR_WATCHDOG_ENABLE
-
 static enum { Watchdog_NotChecked = 0, Watchdog_Off, Watchdog_On } watchdog = Watchdog_NotChecked;
+#endif
 
+#if FR_WATCHDOG_ENABLE || FR_SD_ENABLE
+
+// grblHAL's waits (dwells, spin-up, and some of its own, such as the 100 ms after an
+// alarm) run this instead of the realtime poll. It feeds the watchdog, and keeps an SD
+// card's writes going: FRAM writes have already happened, an SD card's wait for the poll.
 static void onExecuteDelay (sys_state_t state)
 {
+#if FR_WATCHDOG_ENABLE
     if(watchdog == Watchdog_On)
         fr_watchdog_feed();
+#endif
+    if(have_storage)
+        fr_storage_poll();
 
     on_execute_delay(state);
 }
+
+#endif
+
+#if FR_WATCHDOG_ENABLE
 
 // $793 is only read once, at the first poll, so a change takes effect at the next boot.
 static void watchdog_poll (void)
@@ -927,7 +940,7 @@ void flight_recorder_init (void)
     driver_delay_ms = hal.delay_ms;
     hal.delay_ms = delayMs;
 
-#if FR_WATCHDOG_ENABLE
+#if FR_WATCHDOG_ENABLE || FR_SD_ENABLE
     on_execute_delay = grbl.on_execute_delay;
     grbl.on_execute_delay = onExecuteDelay;
 #endif

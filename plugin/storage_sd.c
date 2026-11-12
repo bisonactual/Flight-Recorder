@@ -87,7 +87,11 @@
 #define SD_PATH         "/FLIGHT.DAT"
 #define SD_ATTRIBUTES   (AM_RDO|AM_HID|AM_SYS)
 #define SD_LOG_SECTORS  33u
+#ifndef FR_SD_COPY1
 #define SD_COPY1        (4u * 1024u * 1024u)
+#else
+#define SD_COPY1        FR_SD_COPY1     // 17920 puts it right after the log, to measure against (evidence/SD.md)
+#endif
 #define SD_FILE_SIZE    (SD_COPY1 + SD_SECTOR)
 
 // The sectors of the file we use: 0 to 34 at the start, and copy 1.
