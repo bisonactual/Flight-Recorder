@@ -6,7 +6,7 @@ simulator). It survives the PC, the link and the controller going away. This
 page is the whole interface.
 
 `$I` reports `[PLUGIN:Flight Recorder v0.4.0]` when it's running on FRAM,
-`Flight Recorder (SD card)` on the SD card (no FRAM fitted, an SD card build and
+`Flight Recorder (SD card)` on the SD card (no FRAM fitted, a `_fr_sd` build and
 a card in), or `Flight Recorder (no storage)` with neither; then these commands
 are not available. A sender should accept either of the first two.
 

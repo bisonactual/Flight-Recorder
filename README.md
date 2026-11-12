@@ -49,7 +49,9 @@ Bish Bash Bosh.
 
 ### No FRAM? The uFlexiNET's SD card
 
-If the board has the uFlexiNET module (network and micro-SD, on the 40-pin header), the recorder can keep its record on the SD card instead, no soldering. Flash one of the `printnc_eth_sd` recorder builds and put a card in. With no FRAM at U27 (the stock EEPROM is fine, it is left alone) `$I` shows `[PLUGIN:Flight Recorder (SD card) v0.4.0]`. With the FRAM fitted, the FRAM is used, as before.
+If the board has the uFlexiNET module (network and micro-SD, on the 40-pin header), the recorder can keep its record on the SD card instead, no soldering. Flash one of the **`_FR_SD`** builds (`FLEXI_HAL_PRINTNC_ETH_SD_FR_SD_...uf2`, `..._4X_FR_SD_...`, `_WD` for the watchdog) and put a card in. `$I` shows `[PLUGIN:Flight Recorder (SD card) v0.4.0]`.
+
+Use the `_FR_SD` builds on a board with the stock EEPROM at U27, never the plain `_FR` ones: those treat the chip at U27 as FRAM and skip the EEPROM's write delays, so grblHAL's own settings wouldn't save properly. (A `_FR_SD` build on a board with the FRAM works too: it uses the FRAM, and settings just save a little slower.)
 
 - At the first boot the recorder makes `FLIGHT.DAT` on the card (8 MB, hidden, read only) and from then on writes its sectors directly, never through the file system. Your G-code files on the card are left alone.
 - The record is written at most every 100 ms while the line changes (FRAM: 20 ms, `$794` to change it). Events are written about once a second; alarms, a lost link, resets and stream timeouts at once. So a power cut can lose the last tenth of a second of record and the last second of minor events (an error reply, say).
@@ -104,7 +106,7 @@ stream stops. Open source (GPLv3, like grblHAL).
     otherwise: a 16 KB part would have its settings overwritten, and an EEPROM
     would wear out.
  - Or **Flexi-HAL A6/A7 with the uFlexiNET module** and a micro-SD card in it, with
-   one of the `printnc_eth_sd` builds: used when there is no FRAM (above).
+   one of the `_FR_SD` builds: used when there is no FRAM (above).
  - Neither: the recorder reports `Flight Recorder (no storage)` and only does the
    stream loss retract.
 - **Leave MPG off**

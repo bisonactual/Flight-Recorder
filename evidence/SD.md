@@ -207,7 +207,8 @@ scenario stopped on the same line.) `results/sd/resume-power-sd.json`.
 ## Hardware tests owed (the owner's)
 
 On a Flexi-HAL with the uFlexiNET and the stock EEPROM at U27 (so no FRAM),
-flashing `FLEXI_HAL_PRINTNC_ETH_SD_FR[_WD]`. Cards, at least one of each:
+flashing `FLEXI_HAL_PRINTNC_ETH_SD_FR_SD[_WD]` (not the plain `_FR` builds,
+which take the chip at U27 for FRAM). Cards, at least one of each:
 
 | Class | Cards | Why |
 |---|---|---|
@@ -218,10 +219,12 @@ flashing `FLEXI_HAL_PRINTNC_ETH_SD_FR[_WD]`. Cards, at least one of each:
 
 Card sizes 8–32 GB (FAT32) and one 64 GB (exFAT).
 
-1. **Comes up on SD.** `$I` shows `Flight Recorder (SD card) v0.4.0`; FLIGHT.DAT
-   is on the card (8 MB, hidden); `$FLIGHTSD` shows `apart=8192` or more and
-   `ok`. With the FRAM board: `Flight Recorder v0.4.0`, `$794=0`, behaves as
-   v0.3.0 (record every 20 ms, events at once).
+1. **Comes up on SD.** `$I` shows `Flight Recorder (SD card) v0.4.0` and
+   `[NVS STORAGE:*EEPROM]`; FLIGHT.DAT is on the card (8 MB, hidden);
+   `$FLIGHTSD` shows `apart=8192` or more and `ok`. Settings stick: change a
+   few (`$110`, a `G10 L2` offset, `$794`), power-cycle, read them back. With
+   the FRAM board and a `_FR` build: `Flight Recorder v0.4.0`, `$794=0`,
+   behaves as v0.3.0 (record every 20 ms, events at once, no `$FLIGHTSD`).
 2. **Card latency, per card.** A 10-minute dense job (short segments) over
    the network with `$FLIGHTSD=R` first; afterwards note `busy_avg`,
    `busy_max`, `pauses`, `failed`, `blocked_max_us`, `gap_max`. Reject a card

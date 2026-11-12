@@ -6,17 +6,24 @@ recorder needs. Same board options, same UF2 bootloader, same way of flashing.
 
 | Variants | Expatria build | For |
 |---|---|---|
-| `f446re_flexi_cnc_printnc_eth_sd_fr`, `..._fr_wd` | `printnc_eth_sd` | PrintNC with the uFlexiNET (network + SD) |
+| `f446re_flexi_cnc_printnc_eth_sd_fr`, `..._fr_wd` | `printnc_eth_sd` | PrintNC with the uFlexiNET (network + SD), FRAM at U27 |
 | `f446re_flexi_cnc_printnc_eth_sd_4x_fr`, `..._fr_wd` | `printnc_eth_sd_4x` | the same, 4 axes |
-| `f446re_flexi_cnc_printnc_fr`, `..._fr_wd` | `printnc` | PrintNC over USB only |
+| `f446re_flexi_cnc_printnc_fr`, `..._fr_wd` | `printnc` | PrintNC over USB only, FRAM at U27 |
+| `f446re_flexi_cnc_printnc_eth_sd_fr_sd`, `..._fr_sd_wd` | `printnc_eth_sd` | PrintNC with the uFlexiNET, the stock EEPROM at U27: records on the SD card |
+| `f446re_flexi_cnc_printnc_eth_sd_4x_fr_sd`, `..._fr_sd_wd` | `printnc_eth_sd_4x` | the same, 4 axes |
 
-`_fr` is the recorder; `_fr_wd` adds the hardware watchdog
+`_fr` is the recorder on the FRAM; `_wd` adds the hardware watchdog
 (`FR_WATCHDOG_ENABLE=1`, setting `$793`): a hung controller resets after
 3–10 s and so stops the spindle (`docs/COMMANDS.md`, "Watchdog").
 
-The `eth_sd` builds can also record on the uFlexiNET's SD card, when no FRAM
-is fitted (`plugin/storage_sd.c`, top README). The USB-only `printnc` builds
-have no SD card support, so only the FRAM.
+`_fr_sd` is the recorder on the uFlexiNET's SD card, for boards without the
+FRAM (`plugin/storage_sd.c`, top README). The two kinds differ in how they
+treat the chip at U27, which also holds grblHAL's settings: the `_fr` builds
+take it as FRAM (`EEPROM_IS_FRAM=1`, no write delays) and record only there,
+as before; the `_fr_sd` builds keep the EEPROM's 5 ms write delays and record
+on the FRAM if one is fitted after all, otherwise on the SD card. So never put
+a `_fr` build on a board with the stock EEPROM: its settings saves would be
+cut short. The USB-only boards have no SD card, so there is no `printnc_fr_sd`.
 
 Other Flexi-HAL builds work the same way (all 17 built on 31 Oct 2026); add
 a pair of sections for each to `flexihal-a7/platformio.local.ini` when needed.
@@ -29,9 +36,9 @@ branch `F446_Flexi_HAL`, pinned in `flexihal-a7/driver.lock`.
 Each variant adds to Expatria's build:
 
 - the recorder plugin (`plugin/`) and `FLIGHT_RECORDER_ENABLE=1`;
-- `EEPROM_IS_FRAM=1`: the FM24V10 FRAM fitted at U27 (see the top README).
-  With the stock EEPROM still there the recorder leaves it alone and uses the
-  SD card instead (`eth_sd` builds);
+- `_fr` builds: `EEPROM_IS_FRAM=1`, the FM24V10 FRAM fitted at U27 (see the
+  top README), and no SD card storage (`FR_SD_ENABLE=0`); `_fr_sd` builds:
+  neither, the stock EEPROM's write delays kept;
 - `MPG_ENABLE=0`: MPG stays off with the FRAM, whatever the parent build says;
 - `core/executing-line.patch`, `core/plugin-init.patch` and
   `core/modbus-stats.patch` on the grblHAL core (the last only lets the
@@ -54,7 +61,7 @@ firmware/flexihal-a7/build.sh                                        # all six
 
 The driver is checked out under `firmware/build/` (or `$FR_BUILD_DIR`); UF2
 files land in `firmware/flexihal-a7/out/`, named like Expatria's:
-`FLEXI_HAL_<BUILD>_FR[_WD]_<driver version>.uf2`, e.g.
+`FLEXI_HAL_<BUILD>_FR[_SD][_WD]_<driver version>.uf2`, e.g.
 `FLEXI_HAL_PRINTNC_ETH_SD_FR_WD_20260225_220226.uf2`. Pick the one matching the
 Expatria build the machine runs today.
 
@@ -112,9 +119,12 @@ On the bench, spindle unloaded, Z high:
   counts the whole 512 KB chip). The USB-only `printnc_fr` uses 275,784
   (60 %). (Not compared byte for byte with their published UF2, which was
   built with the unpublished commit.)
-- v0.4.0 (SD card storage), built 12 Nov 2026: `_fr` 363,568 bytes of flash and
-  77,348 of RAM (79.3 % of the 448 KB), 3.5 KB and 2.4 KB more than v0.3.0
-  built the same way (360,072 and 74,932); the RAM is three event sectors and a
-  send buffer. `_fr_wd` 363,968 / 77,352; `eth_sd_4x_fr` 365,512 / 76,908,
-  `_wd` 365,912 / 76,912; USB-only `printnc_fr` 276,476 / 30,924, `_wd`
-  276,924 / 30,932.
+- v0.4.0, built 12 Nov 2026 (bytes of flash / RAM). `eth_sd_fr` 360,808 /
+  74,960: 736 and 28 more than v0.3.0 built the same way (360,072 / 74,932).
+  `eth_sd_fr_sd` 363,600 / 77,348 (79.3 % of the 448 KB): the SD card storage
+  is 2.8 KB of flash and 2.4 KB of RAM more, the RAM three event sectors and a
+  send buffer. `_wd` adds about 0.4 KB each: `eth_sd_fr_wd` 361,256 / 74,968,
+  `eth_sd_fr_sd_wd` 364,000 / 77,352. 4 axes: `eth_sd_4x_fr` 362,752 /
+  74,520, `_wd` 363,200 / 74,528, `eth_sd_4x_fr_sd` 365,544 / 76,908, `_wd`
+  365,944 / 76,912. USB-only `printnc_fr` 276,476 / 30,924, `_wd` 276,924 /
+  30,932.
