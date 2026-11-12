@@ -4,7 +4,7 @@ The plugin keeps a record of the job in non-volatile memory (the A7's FRAM; a
 file in the simulator). It survives the PC, the link and the controller going
 away. This page is the whole interface.
 
-`$I` reports `[PLUGIN:Flight Recorder v0.4.0]` when it's running, or
+`$I` reports `[PLUGIN:Flight Recorder v0.4.1]` when it's running, or
 `Flight Recorder (no storage)` when the board has no supported FRAM; then
 these commands are not available.
 

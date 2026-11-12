@@ -78,7 +78,7 @@ other plugin, so their saved settings stay where they were. Coming from
 v0.2.0, its own settings go back to their defaults once (v0.3.0 added `$793`).
 From v0.3.0 everything carries over: settings, the record and the event log.
 
-After flashing, `$I` should list `[PLUGIN:Flight Recorder v0.4.0]`, and
+After flashing, `$I` should list `[PLUGIN:Flight Recorder v0.4.1]`, and
 `$EVENTS` should show a `BOOT` entry with a real cause: `reset=power-on` after
 plugging in, `reset-pin` after pressing **RST**. `unknown` there means the
 bootloader clears the reset flags: tell us. If `$I` says `Flight Recorder (no
