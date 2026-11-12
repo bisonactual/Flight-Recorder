@@ -22,9 +22,9 @@
 */
 
 /*
-  What both storage backends need from the processor: why it last reset, the
-  independent watchdog, and for the SD card, a way to see whether the card is
-  still busy without waiting for it.
+  The processor side of the recorder: the reset cause, the independent
+  watchdog, and a check on whether the SD card is still busy that doesn't wait
+  for it.
 */
 
 #include "driver.h"
@@ -108,10 +108,10 @@ void fr_watchdog_feed (void)
 #define FATFS_SPI_PRESCALER SPI_BAUDRATEPRESCALER_16
 #endif
 
-// While an SD card programs a block it holds its data out line low. It does that only
-// while selected, so select it, clock one byte and let it go again, the way
-// diskio.c's wait_ready() looks but without waiting. The W5500 shares the bus; both
-// it and diskio.c set their own speed when they select, and we put back what we found.
+// An SD card holds its data out line low while it programs a block, but only while it is
+// selected. So select it, clock a byte and deselect it, as diskio.c's wait_ready() does
+// but without the wait. The W5500 and diskio.c each set their own bus speed when they
+// select, and we put back the speed we found.
 bool fr_sd_card_busy (void)
 {
     uint32_t speed = spi_set_speed(FATFS_SPI_PRESCALER & SPI_BAUDRATEPRESCALER_256);

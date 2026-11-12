@@ -1,7 +1,7 @@
 # Evidence: flight recorder in the simulator
 
-The SD card storage (v0.4.0) has its own runs: `SD.md`. This page is the
-FRAM path, which v0.4.0 leaves as it was.
+The SD card storage (v0.4.0) has its own page, `SD.md`. This one covers the
+FRAM path, which v0.4.0 doesn't change.
 
 31 Oct 2026, after the fix pass for technical review A. GRBLHAL-Sim branch
 `usb-stream` with this repository built in (`-DFLIGHT_RECORDER_DIR`), WSL

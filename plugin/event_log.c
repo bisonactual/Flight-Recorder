@@ -43,11 +43,11 @@
   counted in the existing entry instead of taking a new one, so a chattering
   switch or a burst of the same error doesn't wipe out the history.
 
-  On FRAM every event is written as it happens. An SD card batches them: the
-  events go into RAM and out to the card about once a second, with the header
-  written once per batch. Alarms, a lost link, resets and stream timeouts go
-  out at once, as does every start-up. Where the ring and its header are, and
-  how many slots it has, comes from the storage (fr_storage_info()).
+  On FRAM each event is written as it happens. On an SD card events wait in
+  RAM and go out together about once a second, with one header write. Alarms,
+  a lost link, resets, stream timeouts and start-ups go out at once. The
+  storage says where the ring and its header are and how many slots there are
+  (fr_storage_info()).
 */
 
 // Before driver.h, see flight_recorder.c.
@@ -148,7 +148,7 @@ void fr_log_storage_result (bool ok)
     }
 }
 
-// Without batching every write goes out at once (on FRAM it already has, flushing does nothing).
+// Without batching each write goes out at once. On FRAM it already has and the flush does nothing.
 static void write_header (void)
 {
     header.magic = LOG_MAGIC;
@@ -215,7 +215,7 @@ static void flush_last_event (void)
     }
 }
 
-// The batch goes out: the last event's repeat count, the header, and everything the
+// Writes out the batch: the last event's repeat count, the header, and whatever the
 // storage still has in RAM.
 static void flush_log (void)
 {
@@ -225,9 +225,9 @@ static void flush_log (void)
     batch_pending = false;
 }
 
-// What a power cut straight afterwards is most likely to be about doesn't wait for
-// the batch: alarms, a lost link, resets (and every start-up), and jobs stopping for
-// any of those or for a stream timeout.
+// Written at once rather than batched, as they matter most if the power goes next:
+// alarms, a lost link, resets and start-ups, and a job stopping for any of those or
+// for a stream timeout.
 static bool is_urgent (fr_event_type_t type, uint8_t code, uint32_t data)
 {
     switch(type) {
@@ -585,8 +585,8 @@ void fr_log_init (uint32_t boot_count, uint8_t reset_cause, uint8_t job_state)
            header.head < ring && header.count <= FR_LOG_EVENTS))
         rebuild_header();
 
-    // If the power went between writing events and the header, the events are there anyway,
-    // so take them. On FRAM that is at most one; a batching SD card can have a batch.
+    // If the power went after some events were written but before the header, the events
+    // are still there, so take them. On FRAM that's at most one, on an SD card a batch.
     for(uint16_t n = 0; n < ring && read_slot(header.head, &event) && event.index == header.next_index; n++) {
         header.next_index++;
         header.head = (header.head + 1) % ring;

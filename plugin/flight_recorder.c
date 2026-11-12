@@ -28,8 +28,8 @@
   stopped. A sender can resume a job from it after the PC, the link or the
   controller has gone away. The line number comes from
   core/executing-line.patch, so it is never ahead of the machine. While the
-  line changes it is written at most every $794 ms (0: 20 on FRAM, 100 on an
-  SD card); a change of state goes out at once.
+  line changes it is written at most every $794 ms, by default 20 on FRAM and
+  100 on an SD card. A change of state is written at once.
 
   If the sender stops feeding a job while the spindle is on, the machine goes
   idle with the tool sitting in the cut. After $791 seconds of that, or straight
@@ -91,8 +91,8 @@
 #define FR_RETRACT_LIMIT        120000u     // ms we give a retract before stopping the machine
 #endif
 
-// record_interval sits in what was padding before v0.4.0, so the saved settings still load and
-// it comes up 0, the storage's own interval.
+// record_interval uses what was padding before v0.4.0, so older saved settings still load,
+// with it at 0.
 typedef struct {
     bool auto_retract;
     float timeout;          // s
@@ -171,8 +171,8 @@ static bool is_valid_record (const fr_record_t *rec)
 
 // There are two copies and each write goes to the older one, so a power cut in the
 // middle of a write still leaves the previous record. If a write fails we try the
-// same slot again next time and never touch the newer copy. (An SD card picks the
-// copy itself, as it finishes writes later: storage_sd.c.)
+// same slot again next time and never touch the newer copy. On an SD card storage_sd.c
+// picks the copy itself, as the card finishes writes later.
 static void write_record (void)
 {
     if(!have_storage)
@@ -426,10 +426,9 @@ static enum { Watchdog_NotChecked = 0, Watchdog_Off, Watchdog_On } watchdog = Wa
 
 #if FR_WATCHDOG_ENABLE || FR_SD_ENABLE
 
-// grblHAL's waits (dwells, spin-up, and some of its own, such as the 100 ms after an
-// alarm) run this instead of the realtime poll. It feeds the watchdog, and keeps an SD
-// card's writes going: FRAM writes have already happened, but an SD card's writes wait
-// for the poll.
+// grblHAL runs this instead of the realtime poll while it waits: dwells, spin-up, and
+// its own delays such as the 100 ms after an alarm. It feeds the watchdog and keeps an
+// SD card's writes going, as those wait for the poll.
 static void onExecuteDelay (sys_state_t state)
 {
 #if FR_WATCHDOG_ENABLE

@@ -26,8 +26,8 @@
   the same layout. Every write is flushed straight away, so it survives the
   simulator being killed, which is how the evidence runs cut the power.
 
-  Started with -F, the simulator has no FRAM fitted, and the recorder goes on
-  to the SD card (-d).
+  With -F the simulator has no FRAM fitted, and the recorder uses the SD card
+  (-d) instead.
 */
 
 #include "driver.h"

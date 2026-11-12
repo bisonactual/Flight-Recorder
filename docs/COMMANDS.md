@@ -5,10 +5,10 @@ the SD card in the uFlexiNET module; a file or an emulated card in the
 simulator). It survives the PC, the link and the controller going away. This
 page is the whole interface.
 
-`$I` reports `[PLUGIN:Flight Recorder v0.4.0]` when it's running on FRAM,
-`Flight Recorder (SD card)` on the SD card (no FRAM fitted, a `_fr_sd` build and
-a card in), or `Flight Recorder (no storage)` with neither; then these commands
-are not available. A sender should accept either of the first two.
+`$I` reports `[PLUGIN:Flight Recorder v0.4.0]` when it's running on FRAM, and
+`Flight Recorder (SD card)` when it's on the SD card (no FRAM fitted, a `_fr_sd`
+build and a card in). A sender should accept either. With neither it reports
+`Flight Recorder (no storage)`, and these commands are not available.
 
 ## What the sender must do
 
@@ -62,10 +62,10 @@ status report (`?`) meanwhile.
 
 A `Running` record found at boot becomes `Stopped`, `why=reboot`.
 
-While the line changes the record is written at most every `$794` ms: 20 on
-FRAM, 100 on an SD card. A change of state (start, stop, retract, end) is
-written at once. So a power cut loses at most that interval of progress: `ln`
-can be a few lines behind the one cutting, never ahead.
+While the line changes the record is written at most every `$794` ms, by
+default 20 on FRAM and 100 on an SD card. A change of state (start, stop,
+retract, end) is written at once. A power cut loses at most that interval of
+progress, so `ln` can be a few lines behind the one cutting, but not ahead.
 
 `ln` comes from the steppers; `tool`, `wcs`, `flags` and `mpos` from the
 controller's state when it was written, which can already include a line
@@ -85,10 +85,9 @@ to read when a machine misbehaves "for no reason", which on these machines is
 usually electrical noise.
 
 On FRAM every event is written as it happens. On an SD card they are kept in
-RAM and written about once a second, as one batch; alarms, a lost link, a
-reset (and every start) and a job stopping for one of those or for a stream
-timeout are written at once. A power cut can lose the last second of the other
-events.
+RAM and written together about once a second. Alarms, a lost link, a reset,
+every start, and a job stopping for one of those or a stream timeout are
+written at once. A power cut can lose the last second of the other events.
 
 ```
 [EVENT:812|boot=7|t=1523.410|LIMIT|min=X|max=-|n=1]
@@ -123,9 +122,9 @@ says `unknown` on the A7, the UF2 bootloader clears them first, and a watchdog
 reset logs no `SPINDLE_OFF` (the spindle is still stopped). The simulator
 always says `unknown`. If the log's header is ever unreadable (a power cut
 while it was written), it is rebuilt from the events at the next boot. Events
-written after the last header write are found and kept at the next boot too. A
-power cut while an SD card writes a sector of the log can leave the up to 32
-events in it unreadable (`[EVENT:?|unreadable slot n]`).
+written after the last header write are found at the next boot and kept. A
+power cut while an SD card writes a log sector can leave the events in it, up
+to 32, unreadable (`[EVENT:?|unreadable slot n]`).
 
 ## Stream-loss retract
 
@@ -212,9 +211,9 @@ Coming from v0.3.0, `$790`–`$793` keep their values and `$794` starts at 0.
 | `ok` / `failing` | `failing` once a write has failed or the card has been busy for over a second, until a write works again |
 
 The recorder makes `FLIGHT.DAT` (8 MB + 512 bytes, hidden, read only, system)
-once, at its full size, and from then on writes its sectors directly, never
-through the file system. Don't delete it, and don't swap the card with the
-board on. The card's other files are left alone.
+once, at full size, and after that writes its sectors directly rather than
+through the file system. It leaves the card's other files alone. Don't delete
+it, and don't swap the card with the board on.
 
 ## Resume
 

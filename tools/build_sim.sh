@@ -3,9 +3,9 @@
 #
 # Usage: tools/build_sim.sh <GRBLHAL-Sim checkout, branch sd-card> <output dir> [variant ...]
 #   sd          the normal build: FRAM stand-in (FLIGHT.DAT) unless -F, the SD card with -d
-#   sd-fwrite   SD writes through f_write + f_sync instead, to measure against
-#   sd-nobatch  SD with every event written at once, to measure against
-#   sd-compact  FLIGHT.DAT's three parts packed together instead of 4 MiB apart, to measure against
+#   sd-fwrite   SD writes through f_write + f_sync instead, for comparison
+#   sd-nobatch  every event written at once, for comparison
+#   sd-compact  FLIGHT.DAT's three parts packed together instead of 4 MiB apart, for comparison
 #   sd-1mhz     1 MHz processor clock, for whole-job runs (evidence/README.md)
 #   sd-short    short retract limit, for the focused hold-retract scenario
 # Each lands in <output dir>/<variant>/grblHAL_flexihal_sim. Linux or WSL, with cmake and gcc.

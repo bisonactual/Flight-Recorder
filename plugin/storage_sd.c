@@ -22,47 +22,42 @@
 */
 
 /*
-  For boards without the FRAM: the Flexi-HAL with the uFlexiNET module, whose
-  micro-SD shares an SPI bus with the W5500.
+  SD card storage, for boards without the FRAM: the Flexi-HAL with the uFlexiNET
+  module, whose micro-SD shares an SPI bus with the W5500.
 
-  FLIGHT.DAT holds what the FRAM holds, the two copies of the job record and
-  the event log. It is made once, at its full size, through the file system.
-  After that we look up which card sectors hold it and write those directly,
-  so no write ever changes the file's size, the FAT or its directory entry.
-  (f_write and f_sync would rewrite the directory entry on every record, and a
-  torn directory sector loses other files too: evidence/SD.md.) The file is
-  read only, hidden and system, so grblHAL's file commands and FTP leave it be.
+  FLIGHT.DAT holds what the FRAM would, the two record copies and the event log.
+  It is made once, at full size, through FatFs. After that we look up the card
+  sectors behind it and write to those directly, so the file's size, the FAT and
+  its directory entry stay as they are. f_write and f_sync would rewrite the
+  directory entry with every record, and a power cut in that sector can take
+  other files with it. The file is read only, hidden and system, so grblHAL's
+  file commands and FTP leave it alone.
 
-  File layout, three parts 4 MiB apart:
-    0          record copy 0
-    4 MiB      event log header, then the event ring: 33 sectors of 32 events (1056 slots)
-    8 MiB      record copy 1
-  Each copy has a sector of its own, so a torn write can only take one of
-  them. The parts are also 4 MiB apart, which puts them in different
-  allocation units of the card (4 MiB on most cards). So a card that rewrites
-  more than the sector it is given, up to a whole unit, can't take both
-  copies either, and a torn log write can't take one: the copy the card
-  finished last always survives. (evidence/SD.md measured it with copy 0, the
-  header and the log packed together: a torn header write then took copy 0.)
+  The three parts are 4 MiB apart:
 
-  The ring is a sector longer than the 1000 events kept, because a sector the
-  log moves into is started afresh rather than read in first. That drops the
-  oldest events in it, and there are always 1024 or more left behind it.
+    0       record copy 0
+    4 MiB   log header, then the ring: 33 sectors of 32 events (1056 slots)
+    8 MiB   record copy 1
 
-  Never waiting for the card. An SD card can be busy for a long time after a
-  write (250 ms is allowed, and some cards take longer now and then), and
-  FatFs would sit in the driver waiting for it with nothing else running. So:
-    - writes only go into RAM here, and the realtime poll sends them to the
-      card one sector at a time, when the card isn't busy;
-    - a sector is sent with CMD24 and the card deselected straight away; we
-      look again on the next poll (board file: fr_sd_card_busy()), and the
-      W5500 has the bus meanwhile;
-    - the record: the newest one wins, in RAM, and goes to the copy the card
-      did not finish last. Records go before everything else;
-    - the event log and its header go out when the log asks (once a second, or
-      at once for an alarm and the like), entries before the header, so a
-      header never points past events that aren't on the card.
-  Only reads wait, at start-up and for $EVENTS.
+  That puts them in different allocation units on most cards. A card that
+  damages more than the sector it was writing, up to a whole unit, can then only
+  hurt the copy it was writing and not the one it finished last, and a torn log
+  write hurts neither. evidence/SD.md has the runs.
+
+  The ring is a sector longer than the 1000 events kept. A sector the log moves
+  into is started blank rather than read first, which drops the oldest events in
+  it and leaves at least 1024.
+
+  A card can stay busy for 250 ms after a write, sometimes longer, and FatFs
+  would sit waiting for it with nothing else running. So writes only go into RAM
+  here, and the realtime poll sends one sector at a time when the card is free.
+  The sector goes with CMD24 and the card is let go at once. The next poll checks
+  whether it has finished (fr_sd_card_busy() in the board file), and the W5500
+  has the bus in between. A newer record replaces one still in RAM and goes out
+  first, to the copy the card didn't finish last. Log sectors go out when the
+  event log asks, ahead of the header, so the header doesn't point at events
+  that aren't on the card yet. Only reads wait for the card, at start-up and for
+  $EVENTS.
 */
 
 #include "driver.h"
@@ -91,7 +86,7 @@
 #define SD_LOG_SECTORS  33u
 
 #ifndef FR_SD_SPREAD
-#define FR_SD_SPREAD    (4u * 1024u * 1024u)    // between the parts. 0 packs them together, to measure against
+#define FR_SD_SPREAD    (4u * 1024u * 1024u)    // between the parts, 0 packs them together for comparison
 #endif
 
 #define SD_HEADER_AT    (FR_SD_SPREAD ? FR_SD_SPREAD : SD_SECTOR)
@@ -112,7 +107,7 @@
 #define SD_READ_WAIT    500u        // ms a read waits for the card to finish a write
 
 #ifndef FR_SD_FATFS_WRITES
-#define FR_SD_FATFS_WRITES 0        // 1: write through f_write and f_sync instead, to measure it (evidence/SD.md)
+#define FR_SD_FATFS_WRITES 0        // 1 writes through f_write and f_sync instead, for comparison
 #endif
 
 #if FF_FS_TINY
@@ -129,7 +124,7 @@ typedef struct {
 typedef struct {
     uint32_t writes, failed, finished, pauses;
     uint32_t busy_total, busy_max;  // ms the card took per write
-    uint32_t blocked_max;           // us we kept the processor, per call
+    uint32_t blocked_max;           // longest a call held the processor, us
     uint32_t gap_max;               // ms between realtime polls
 } sd_stats_t;
 
@@ -154,7 +149,7 @@ static struct {
 
 static cache_t cache[SD_CACHE];
 static uint32_t use_count = 0, dirty_count = 0;
-static int16_t last_written = -1;   // event sector written last, never dropped from the cache
+static int16_t last_written = -1;   // event sector written last, stays in the cache
 static bool flush_requested = false;
 
 static struct {
@@ -183,7 +178,7 @@ static void blocked_since (uint32_t start)
         stats.blocked_max = us;
 }
 
-// The file sector behind an index, and back: -1 for a file sector we don't use.
+// Index to file sector and back. map_index() gives -1 for a sector we don't use.
 static uint32_t file_sector (uint_fast8_t index)
 {
     if(index == 0)
@@ -274,7 +269,7 @@ static bool send_sector (int16_t index, const uint8_t *data)
 
 #endif // !FR_SD_FATFS_WRITES
 
-// Waits for the card to finish a write, for a read. Only at start-up and for $EVENTS.
+// Reads wait for the card to finish any write. Only at start-up and for $EVENTS.
 static bool wait_idle (void)
 {
 #if !FR_SD_FATFS_WRITES
@@ -305,8 +300,8 @@ static bool read_sector (int16_t index, uint8_t *data)
 
 // Event sectors in RAM
 
-// The event sector at index, read from the card first unless the log is starting it
-// afresh: an event going into its first slot means the log has just moved into it.
+// Gets an event sector into RAM. It is read from the card, unless the log has just
+// moved into it (fresh, an event going into its first slot), and then it starts blank.
 static cache_t *cache_get (int16_t index, bool fresh)
 {
     cache_t *c, *drop = NULL;
@@ -383,7 +378,7 @@ static bool sd_read (uint32_t addr, void *data, uint32_t size)
 
 #if FR_SD_FATFS_WRITES
 
-// For the measurements only: every write goes through the file system, which waits for the card.
+// Comparison builds only: every write goes through FatFs and waits for the card.
 static FIL file;
 
 static bool sd_write (uint32_t addr, const void *data, uint32_t size)
@@ -411,8 +406,8 @@ static bool sd_write (uint32_t addr, const void *data, uint32_t size)
     if(!ready || index < 0 || offset + size > SD_SECTOR)
         return false;
 
-    // A record copy. Whichever copy the recorder asks for, the record goes to the one
-    // the card did not finish last, so the newest finished record is never overwritten.
+    // A record goes to the copy the card didn't finish last, whichever one the recorder
+    // asked for, so the newest finished record is kept.
     if(index == 0 || index == (int16_t)SD_COPY1_INDEX) {
         if(offset || size > sizeof(record.data))
             return false;
@@ -531,7 +526,7 @@ static void sd_report (bool reset)
     char buf[200];
     uint32_t done = stats.finished;
 
-    // The closest two of the three parts are, on the card.
+    // How far apart the closest two of the three parts are on the card.
     uint32_t apart = sectors_apart(0, SD_COPY1_INDEX);
     if(sectors_apart(0, SD_HEADER) < apart)
         apart = sectors_apart(0, SD_HEADER);
@@ -563,7 +558,7 @@ static bool make_file (void)
     UINT written;
     bool ok;
 
-    f_chmod(SD_PATH, 0, SD_ATTRIBUTES);     // an old one, of the wrong size, has to go
+    f_chmod(SD_PATH, 0, SD_ATTRIBUTES);     // so an old one of the wrong size can be replaced
 
     if(f_open(&f, SD_PATH, FA_CREATE_ALWAYS|FA_WRITE) != FR_OK)
         return false;
@@ -586,9 +581,9 @@ static bool make_file (void)
     return ok;
 }
 
-// Looks up the card sector behind each file sector we use: reading a byte through
-// FatFs leaves the sector in the file's buffer, and its number in sect. Then reads each
-// one straight from the card to check it is the same.
+// Finds the card sector behind each file sector we use. Reading a byte through FatFs
+// leaves the sector in the file's buffer and its number in f.sect, and reading that
+// sector straight from the card has to give the same data.
 static bool map_file (void)
 {
     FIL f;
@@ -650,7 +645,7 @@ const fr_backend_t fr_storage_sd = {
         .log_slots = SD_LOG_SECTORS * (SD_SECTOR / sizeof(fr_event_t)),
         .record_interval = 100,
 #ifdef FR_SD_BATCH_EVENTS
-        .batch_events = FR_SD_BATCH_EVENTS,     // 0 for a build that measures without batching
+        .batch_events = FR_SD_BATCH_EVENTS,     // 0 for the comparison build without batching
 #else
         .batch_events = true,
 #endif

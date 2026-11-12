@@ -84,7 +84,7 @@ def decode_record(data):
 
 
 def newest_valid(records):
-    """The plugin's rule, written again here: the valid copy with the later seq (wrapping)."""
+    """Same rule as the plugin: the valid copy with the later seq, allowing for wrap."""
     valid = [r for r in records if r["valid"]]
     if len(valid) == 2:
         a, b = valid
@@ -348,8 +348,8 @@ def run_pause(args, summary):
             if sent == len(lines) and not in_flight:
                 break
 
-        # The lines still queued finish; grblHAL only takes $ commands once the machine is idle
-        # ($791 is set long enough that the idle spindle doesn't count as a lost stream).
+        # Let the queued lines finish, as grblHAL only takes $ commands once the machine is idle.
+        # $791 is set long enough that the idle spindle doesn't count as a lost stream.
         deadline = time.monotonic() + 15
         while in_flight and time.monotonic() < deadline:
             line = link.readline(0.1)
@@ -367,9 +367,8 @@ def run_pause(args, summary):
         writes = boot["W"][trace_before:]
         t0, t1 = (writes[0]["t"], writes[-1]["t"]) if writes else (0.0, 0.0)
         copies = sorted({c["sector"] for c in boot["C"] if c["data"].hex().startswith(MAGIC_HEX)})
-        # How far the record on the card fell behind: the time between records reaching the card,
-        # over the dense part of the job (from line 10, while the job runs), where the line
-        # changes every 9 ms or so.
+        # How far the record on the card fell behind: the time between records reaching the card
+        # from line 10 on, while the job runs and the line changes every 9 ms or so.
         commits = [(c["t"], decode_record(c["data"])) for c in boot["C"] if c["sector"] in copies and t0 <= c["t"] <= t1]
         dense = [(t, r) for t, r in commits if r["ln"] >= 10 and r["state"] == 1]
         gaps = [b[0] - a[0] for a, b in zip(dense, dense[1:])]
@@ -424,10 +423,10 @@ def run_storm(args, summary):
     boot_writes = lambda: read_trace(trace_path)[-1]["W"]
     before = len(boot_writes())
 
-    # The burst, with the machine idle: feed hold and cycle start pressed in turn, 10 ms apart, so
-    # each press is an event of its own (the same event again within a second would only be
-    # counted), and a garbled line now and then (in this simulator every error after the first
-    # repeats the first one's code, so those are counted into one entry).
+    # The burst, with the machine idle: feed hold and cycle start pressed in turn 10 ms apart, so
+    # each press gets its own entry instead of being counted into the last, and a garbled line
+    # now and then. In this simulator every error after the first repeats the first one's code,
+    # so those all count into one entry.
     started = time.monotonic()
     replies = 0
     for n in range(args.events // 2):

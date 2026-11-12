@@ -17,12 +17,12 @@ recorder needs. Same board options, same UF2 bootloader, same way of flashing.
 3–10 s and so stops the spindle (`docs/COMMANDS.md`, "Watchdog").
 
 `_fr_sd` is the recorder on the uFlexiNET's SD card, for boards without the
-FRAM (`plugin/storage_sd.c`, top README). The two kinds differ in how they
-treat the chip at U27, which also holds grblHAL's settings: the `_fr` builds
+FRAM (see `plugin/storage_sd.c` and the top README). The chip at U27 also holds
+grblHAL's settings, and the two kinds treat it differently. The `_fr` builds
 take it as FRAM (`EEPROM_IS_FRAM=1`, no write delays) and record only there,
-as before; the `_fr_sd` builds keep the EEPROM's 5 ms write delays and record
-on the FRAM if one is fitted after all, otherwise on the SD card. So never put
-a `_fr` build on a board with the stock EEPROM: its settings saves would be
+as before. The `_fr_sd` builds keep the EEPROM's 5 ms write delays and record
+on the FRAM if one is fitted after all, otherwise on the SD card. So don't put
+a `_fr` build on a board with the stock EEPROM, or its settings saves would be
 cut short. The USB-only boards have no SD card, so there is no `printnc_fr_sd`.
 
 Other Flexi-HAL builds work the same way (all 17 built on 31 Oct 2026); add
@@ -36,9 +36,9 @@ branch `F446_Flexi_HAL`, pinned in `flexihal-a7/driver.lock`.
 Each variant adds to Expatria's build:
 
 - the recorder plugin (`plugin/`) and `FLIGHT_RECORDER_ENABLE=1`;
-- `_fr` builds: `EEPROM_IS_FRAM=1`, the FM24V10 FRAM fitted at U27 (see the
-  top README), and no SD card storage (`FR_SD_ENABLE=0`); `_fr_sd` builds:
-  neither, the stock EEPROM's write delays kept;
+- in the `_fr` builds, `EEPROM_IS_FRAM=1` for the FM24V10 FRAM fitted at U27
+  (see the top README) and `FR_SD_ENABLE=0`; the `_fr_sd` builds have neither
+  and keep the stock EEPROM's write delays;
 - `MPG_ENABLE=0`: MPG stays off with the FRAM, whatever the parent build says;
 - `core/executing-line.patch`, `core/plugin-init.patch` and
   `core/modbus-stats.patch` on the grblHAL core (the last only lets the
@@ -87,8 +87,8 @@ FRAM) or `[PLUGIN:Flight Recorder (SD card) v0.4.0]` (no FRAM, a card in), and
 `$EVENTS` should show a `BOOT` entry with a real cause: `reset=power-on` after
 plugging in, `reset-pin` after pressing **RST**. `unknown` there means the
 bootloader clears the reset flags: tell us. If `$I` says `Flight Recorder (no
-storage)`, the chip at U27 isn't the FM24V10 FRAM and there is no SD card (or
-the build has no SD card support), and the recorder only does the retract.
+storage)`, the chip at U27 isn't the FM24V10 FRAM and there's no SD card, or
+the build has no SD card support. The recorder then only does the retract.
 
 ### First checks with a watchdog build
 
@@ -119,12 +119,12 @@ On the bench, spindle unloaded, Z high:
   counts the whole 512 KB chip). The USB-only `printnc_fr` uses 275,784
   (60 %). (Not compared byte for byte with their published UF2, which was
   built with the unpublished commit.)
-- v0.4.0, built 12 Nov 2026 (bytes of flash / RAM). `eth_sd_fr` 360,808 /
-  74,960: 736 and 28 more than v0.3.0 built the same way (360,072 / 74,932).
-  `eth_sd_fr_sd` 363,600 / 77,348 (79.3 % of the 448 KB): the SD card storage
-  is 2.8 KB of flash and 2.4 KB of RAM more, the RAM three event sectors and a
-  send buffer. `_wd` adds about 0.4 KB each: `eth_sd_fr_wd` 361,256 / 74,968,
-  `eth_sd_fr_sd_wd` 364,000 / 77,352. 4 axes: `eth_sd_4x_fr` 362,752 /
-  74,520, `_wd` 363,200 / 74,528, `eth_sd_4x_fr_sd` 365,544 / 76,908, `_wd`
-  365,944 / 76,912. USB-only `printnc_fr` 276,476 / 30,924, `_wd` 276,924 /
-  30,932.
+- v0.4.0, built 12 Nov 2026, in bytes of flash / RAM. `eth_sd_fr` is 360,808 /
+  74,960, which is 736 and 28 more than v0.3.0 built the same way (360,072 /
+  74,932). `eth_sd_fr_sd` is 363,600 / 77,348 (79.3 % of the 448 KB). The SD
+  card storage adds 2.8 KB of flash and 2.4 KB of RAM, the RAM being three
+  event sectors and a send buffer. `_wd` adds about 0.4 KB to each:
+  `eth_sd_fr_wd` 361,256 / 74,968, `eth_sd_fr_sd_wd` 364,000 / 77,352. 4 axes:
+  `eth_sd_4x_fr` 362,752 / 74,520, `_wd` 363,200 / 74,528, `eth_sd_4x_fr_sd`
+  365,544 / 76,908, `_wd` 365,944 / 76,912. USB-only `printnc_fr` 276,476 /
+  30,924, `_wd` 276,924 / 30,932.

@@ -121,8 +121,8 @@ static bool fram_write (uint32_t addr, const void *data, uint32_t size)
     return transfer((uint16_t)(FRAM_BASE + addr), (void *)data, size, false);
 }
 
-// The layout from before there was a choice of storage: the two record copies 64 bytes
-// apart, the log from 0x400, every write straight through.
+// The same layout as before v0.4.0: record copies 64 bytes apart, the log from 0x400,
+// and every write goes straight through.
 const fr_backend_t fr_storage_fram = {
     .info = {
         .label = NULL,
