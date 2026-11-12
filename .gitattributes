@@ -9,5 +9,6 @@
 *.nc    text eol=lf
 *.lock  text eol=lf
 *.ini   text eol=lf
+*.cmake text eol=lf
 *.png   binary
 *.uf2   binary

@@ -33,15 +33,17 @@
   torn directory sector loses other files too: evidence/SD.md.) The file is
   read only, hidden and system, so grblHAL's file commands and FTP leave it be.
 
-  File layout:
-    0        record copy 0
-    512      event log header
-    1024     event ring, 33 sectors of 32 events (1056 slots)
-    4 MiB    record copy 1
+  File layout, three parts 4 MiB apart:
+    0          record copy 0
+    4 MiB      event log header, then the event ring: 33 sectors of 32 events (1056 slots)
+    8 MiB      record copy 1
   Each copy has a sector of its own, so a torn write can only take one of
-  them. And they are 4 MiB apart, which puts them in different allocation
-  units of the card (4 MiB on most cards): cards that rewrite more than the
-  sector they are given, up to a whole unit, can't take both either.
+  them. And the parts are 4 MiB apart, which puts them in different
+  allocation units of the card (4 MiB on most cards), so a card that rewrites
+  more than the sector it is given, up to a whole unit, can't take both
+  copies either, and a torn log write can't take one: the copy the card
+  finished last always survives (evidence/SD.md, measured with copy 0, the
+  header and the log packed together: a torn header write then took copy 0).
 
   The ring is a sector longer than the 1000 events kept, because a sector the
   log moves into is started afresh rather than read in first. That drops the
@@ -87,14 +89,17 @@
 #define SD_PATH         "/FLIGHT.DAT"
 #define SD_ATTRIBUTES   (AM_RDO|AM_HID|AM_SYS)
 #define SD_LOG_SECTORS  33u
-#ifndef FR_SD_COPY1
-#define SD_COPY1        (4u * 1024u * 1024u)
-#else
-#define SD_COPY1        FR_SD_COPY1     // 17920 puts it right after the log, to measure against (evidence/SD.md)
-#endif
-#define SD_FILE_SIZE    (SD_COPY1 + SD_SECTOR)
 
-// The sectors of the file we use: 0 to 34 at the start, and copy 1.
+#ifndef FR_SD_SPREAD
+#define FR_SD_SPREAD    (4u * 1024u * 1024u)    // between the parts. 0 packs them together, to measure against
+#endif
+
+#define SD_HEADER_AT    (FR_SD_SPREAD ? FR_SD_SPREAD : SD_SECTOR)
+#define SD_LOG_AT       (SD_HEADER_AT + SD_SECTOR)
+#define SD_COPY1_AT     (FR_SD_SPREAD ? 2u * FR_SD_SPREAD : SD_LOG_AT + SD_LOG_SECTORS * SD_SECTOR)
+#define SD_FILE_SIZE    (SD_COPY1_AT + SD_SECTOR)
+
+// The sectors we use, by index: copy 0, the header, the log's 33, copy 1.
 #define SD_HEADER       1u
 #define SD_LOG_FIRST    2u
 #define SD_COPY1_INDEX  (SD_LOG_FIRST + SD_LOG_SECTORS)
@@ -178,13 +183,32 @@ static void blocked_since (uint32_t start)
         stats.blocked_max = us;
 }
 
-// File offset to the index of a sector we use, -1 for any other.
+// The file sector behind an index, and back: -1 for a file sector we don't use.
+static uint32_t file_sector (uint_fast8_t index)
+{
+    if(index == 0)
+        return 0;
+
+    return index == SD_COPY1_INDEX ? SD_COPY1_AT / SD_SECTOR : SD_HEADER_AT / SD_SECTOR + index - SD_HEADER;
+}
+
 static int16_t map_index (uint32_t sector)
 {
-    if(sector < SD_COPY1_INDEX)
-        return (int16_t)sector;
+    if(sector == 0)
+        return 0;
 
-    return sector == SD_COPY1 / SD_SECTOR ? (int16_t)SD_COPY1_INDEX : -1;
+    if(sector == SD_COPY1_AT / SD_SECTOR)
+        return (int16_t)SD_COPY1_INDEX;
+
+    if(sector >= SD_HEADER_AT / SD_SECTOR && sector < SD_HEADER_AT / SD_SECTOR + 1 + SD_LOG_SECTORS)
+        return (int16_t)(SD_HEADER + sector - SD_HEADER_AT / SD_SECTOR);
+
+    return -1;
+}
+
+static uint32_t sectors_apart (uint_fast8_t a, uint_fast8_t b)
+{
+    return lba[a] > lba[b] ? lba[a] - lba[b] : lba[b] - lba[a];
 }
 
 // The card
@@ -507,11 +531,18 @@ static void sd_report (bool reset)
     char buf[200];
     uint32_t done = stats.finished;
 
+    // The closest two of the three parts are, on the card.
+    uint32_t apart = sectors_apart(0, SD_COPY1_INDEX);
+    if(sectors_apart(0, SD_HEADER) < apart)
+        apart = sectors_apart(0, SD_HEADER);
+    if(sectors_apart(SD_HEADER, SD_COPY1_INDEX) < apart)
+        apart = sectors_apart(SD_HEADER, SD_COPY1_INDEX);
+
     snprintf(buf, sizeof(buf), "[FLIGHTSD:writes=%lu|failed=%lu|busy_avg=%lu.%lu|busy_max=%lu|pauses=%lu|blocked_max_us=%lu|gap_max=%lu|apart=%lu|%s]",
              (unsigned long)stats.writes, (unsigned long)stats.failed,
              (unsigned long)(done ? stats.busy_total / done : 0), (unsigned long)(done ? (stats.busy_total * 10 / done) % 10 : 0),
              (unsigned long)stats.busy_max, (unsigned long)stats.pauses, (unsigned long)stats.blocked_max,
-             (unsigned long)stats.gap_max, (unsigned long)(lba[SD_COPY1_INDEX] - lba[0]),
+             (unsigned long)stats.gap_max, (unsigned long)apart,
              failing ? "failing" : "ok");
 
     hal.stream.write(buf);
@@ -539,12 +570,11 @@ static bool make_file (void)
 
     memset(tx, 0xFF, SD_SECTOR);
 
-    ok = true;
-    for(uint_fast8_t i = 0; ok && i < SD_COPY1_INDEX; i++)
+    // Seeking past the end makes the file longer without writing what is skipped.
+    ok = f_write(&f, tx, SD_SECTOR, &written) == FR_OK && written == SD_SECTOR && f_lseek(&f, SD_HEADER_AT) == FR_OK;
+    for(uint_fast8_t i = 0; ok && i < 1 + SD_LOG_SECTORS; i++)
         ok = f_write(&f, tx, SD_SECTOR, &written) == FR_OK && written == SD_SECTOR;
-
-    // Seeking past the end makes the file longer without writing the middle.
-    ok = ok && f_lseek(&f, SD_COPY1) == FR_OK && f_write(&f, tx, SD_SECTOR, &written) == FR_OK &&
+    ok = ok && f_lseek(&f, SD_COPY1_AT) == FR_OK && f_write(&f, tx, SD_SECTOR, &written) == FR_OK &&
           written == SD_SECTOR && f_tell(&f) == SD_FILE_SIZE;
 
     ok = f_close(&f) == FR_OK && ok;
@@ -567,8 +597,7 @@ static bool map_file (void)
     bool ok = f_open(&f, SD_PATH, FA_READ) == FR_OK;
 
     for(uint_fast8_t i = 0; ok && i < SD_MAPPED; i++) {
-        uint32_t sector = i == SD_COPY1_INDEX ? SD_COPY1 / SD_SECTOR : i;
-        ok = f_lseek(&f, sector * SD_SECTOR) == FR_OK && f_read(&f, &byte, 1, &got) == FR_OK && got == 1 && f.sect != 0;
+        ok = f_lseek(&f, file_sector(i) * SD_SECTOR) == FR_OK && f_read(&f, &byte, 1, &got) == FR_OK && got == 1 && f.sect != 0;
         if(ok) {
             lba[i] = f.sect;
             ok = disk_read(fs->pdrv, tx, lba[i], 1) == RES_OK && memcmp(tx, f.buf, SD_SECTOR) == 0;
@@ -615,9 +644,9 @@ static bool sd_init (void)
 const fr_backend_t fr_storage_sd = {
     .info = {
         .label = "SD card",
-        .record_stride = SD_COPY1,
-        .log_header = SD_HEADER * SD_SECTOR,
-        .log_entries = SD_LOG_FIRST * SD_SECTOR,
+        .record_stride = SD_COPY1_AT,
+        .log_header = SD_HEADER_AT,
+        .log_entries = SD_LOG_AT,
         .log_slots = SD_LOG_SECTORS * (SD_SECTOR / sizeof(fr_event_t)),
         .record_interval = 100,
 #ifdef FR_SD_BATCH_EVENTS
