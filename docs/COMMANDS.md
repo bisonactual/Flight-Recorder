@@ -115,7 +115,7 @@ between polls, so several trips in a few milliseconds count as one.
 | `LINK` | `usb` / `network`, `connected` / `disconnected` | the sender's USB port opening or closing, a network client arriving or leaving |
 | `MODBUS` | `timeouts`, `crc` (errors), `exceptions`, `retries`, each up to 255 | once a second while the Modbus link (the VFD) has trouble |
 | `JOB` | `start` with `job=`; or the state (`Stopped`, `Retracted`, `Completed`), `why=` and `ln=` | the job record changing |
-| `STORAGE` | `failed_writes=` | FRAM writes that failed, or sectors an SD card refused, logged once a write works again |
+| `STORAGE` | `failed_writes=` | FRAM writes that failed, or on an SD card the sectors it refused and the writes while it was unmounted, logged once a write works again |
 | `SPINDLE_OFF` | `after=` job, watchdog, brown-out | at boot after an unexpected reset: a job was running, the watchdog fired, or the supply dipped. grblHAL switches the spindle and coolant off at every start; this records that it mattered. The board sends the stop again 2 s later, for a Modbus VFD that missed the first |
 
 Notes: the reset cause is read from the processor's reset flags as the
@@ -215,7 +215,15 @@ Coming from v0.3.0, `$790`–`$793` keep their values and `$794` starts at 0.
 The recorder makes `FLIGHT.DAT` (8 MB + 512 bytes, hidden, read only, system)
 once, at full size, and after that writes its sectors directly rather than
 through the file system. It leaves the card's other files alone. Don't delete
-it, and don't swap the card with the board on.
+it.
+
+While the card is unmounted (`$FU`, or card detect) the recorder writes nothing
+to it, and says so (`[MSG:Flight recorder: SD card unmounted, ...]`). When it is
+mounted again it carries on only if `FLIGHT.DAT` is in the same place, so the
+same card with the file untouched (`[MSG:Flight recorder: SD card back, ...]`).
+On any other card it says `FLIGHT.DAT isn't where it was` and stays off the card
+until a restart, which makes `FLIGHT.DAT` on the new one. So after changing the
+card, restart.
 
 ## Resume
 

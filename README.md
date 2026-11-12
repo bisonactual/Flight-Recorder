@@ -57,7 +57,7 @@ On a board with the stock EEPROM at U27, use the `_FR_SD` builds and not the pla
 - The record is written at most every 100 ms while the line changes, and events about once a second, apart from alarms, a lost link, resets and stream timeouts, which go at once. So a power cut can lose the last tenth of a second of the record and the last second of minor events, like an error reply.
 - It doesn't wait for the card, so the pauses cards take now and then (up to 250 ms is allowed) don't hold up the machine or the network, which shares the card's bus.
 - Use a good card, an industrial or high-endurance one (pSLC, with power-loss protection if you can get it). A cheap card that loses power mid-write can damage more than the sector it was writing. FRAM is still the safer choice.
-- Don't swap the card with the board on, as the recorder keeps writing where `FLIGHT.DAT` was on the old card. If you do change it, reboot.
+- While the card is unmounted (`$FU`, or taken out with card detect) nothing is saved. When it's back the recorder carries on only if it's the same card with `FLIGHT.DAT` untouched. With any other card it stays off the card until a reboot, and says so. So after changing the card, reboot.
 - `$FLIGHTSD` shows how the card is doing. `apart=` should be 8192 or more: the two record copies and the log sit 4 MB apart on the card, so a card that damages more than it was writing can't take them all.
 
 So far it has only been tested in the simulator. Hardware tests are next.

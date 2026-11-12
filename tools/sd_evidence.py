@@ -19,11 +19,16 @@ tears the sector being written. Its trace (card.img.trace) has every write.
           and a power cut 50 ms later, and a plain error and a power cut 50 ms
           later. How many card writes the burst took, that the alarm got to the
           card and the error didn't (batching), and what the log kept.
+  remount the card taken out and put back (the simulator's u and c keys, which
+          unmount and mount it as card detect does). Nothing is written while
+          it is out, the same card is taken back and the record saved again;
+          a new blank card in its place is refused until a restart.
 
 Usage:
   sd_evidence.py power --sim <binary> --run <dir> [--cycles 200] [--tear-unit 1]
   sd_evidence.py pause --sim <binary> --run <dir> [--seconds 20] [--pause 0.1,200,250]
   sd_evidence.py storm --sim <binary> --run <dir> [--events 1000]
+  sd_evidence.py remount --sim <binary> --run <dir>
 Each writes <run>/summary.json and prints the checks with a short summary. Exit
 status 1 if one failed. The run folder is emptied first, so it has to be new,
 empty, or an earlier run's (with summary.json or card.img in it).
@@ -516,11 +521,114 @@ def run_storm(args, summary):
     }
 
 
+# remount
+
+def wait_for_text(link, text, timeout=5.0):
+    """Reads lines until one has text in it, and returns it. None if none came."""
+    lines = link.lines_until(lambda line: text in line, timeout)
+    return lines[-1] if lines and text in lines[-1] else None
+
+
+def wait_idle(link, timeout=10.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        link.send(b"?")
+        line = link.readline(0.3)
+        if line and line.startswith("<Idle"):
+            return True
+    return False
+
+
+def card_writes(link):
+    return (sd_stats(link) or {}).get("writes")
+
+
+def run_remount(args, summary):
+    sim = Sim(args.sim, args.run, ws_port=args.port, speed=1.0, sd=True, env={"SIM_SD_SEED": args.seed})
+    steps = summary["steps"] = {}
+
+    def move_to(n):
+        link.command(f"N{n}G21G90G0X{n}")
+        wait_idle(link)
+        time.sleep(1.0)                 # the record goes out and the card finishes
+
+    sim.start()
+    try:
+        link = connect(sim)
+        summary["plugin"] = plugin_line(link)
+        summary["setup"] = setup_machine(link)
+        link.command("$FLIGHT=0000ABCD")
+        move_to(1)
+
+        # The same card out and back in.
+        before_out = card_writes(link)
+        sim.key("u")
+        steps["unmounted"] = wait_for_text(link, "SD card unmounted")
+        move_to(2)
+        while_out = card_writes(link)
+        sim.key("c")
+        steps["back"] = wait_for_text(link, "SD card back")
+        time.sleep(1.0)
+        after_back = card_writes(link)
+        steps["writes"] = {"before_out": before_out, "while_out": while_out, "after_back": after_back}
+        steps["record_after_back"] = query_flight(link)
+        steps["events_after_back"] = events(link, 10)
+
+        # A power cut, to see what the card kept.
+        link.close()
+        sim.kill()
+        sim.start()
+        link = connect(sim)
+        steps["record_after_cut"] = query_flight(link)
+        link.command("$X")
+        link.command("$H", timeout=10)
+        link.command("$FLIGHT=0000ABCE")
+        move_to(3)
+
+        # A new blank card in its place: the simulator makes and formats one when the image is gone.
+        sim.key("u")
+        steps["unmounted_again"] = wait_for_text(link, "SD card unmounted")
+        os.remove(sim.card)
+        sim.key("c")
+        steps["new_card"] = wait_for_text(link, "FLIGHT.DAT isn't where it was", 15)
+        at_swap = card_writes(link)
+        move_to(4)
+        after_swap = card_writes(link)
+        steps["writes_new_card"] = {"at_swap": at_swap, "after": after_swap}
+
+        # After a restart the recorder makes FLIGHT.DAT on the new card and uses it.
+        link.close()
+        sim.kill()
+        sim.start()
+        link = connect(sim)
+        steps["plugin_after_restart"] = plugin_line(link)
+        steps["record_after_restart"] = query_flight(link)
+        link.close()
+    finally:
+        sim.kill()
+
+    back, cut, restart = steps["record_after_back"], steps["record_after_cut"], steps["record_after_restart"]
+    return {
+        "unmount noticed": steps["unmounted"] is not None,
+        "nothing written while out": while_out == before_out,
+        "same card taken back": steps["back"] is not None,
+        "written again once back": after_back is not None and while_out is not None and after_back > while_out,
+        "record from while out is on the card": bool(back and cut) and back["ln"] == 2 and
+                                                (cut["ln"], cut["state"], cut["why"]) == (2, "Stopped", "reboot"),
+        "new card refused": steps["new_card"] is not None,
+        "nothing written to the new card": at_swap is not None and after_swap == at_swap,
+        "new card used after a restart": "(SD card)" in (steps["plugin_after_restart"] or "") and
+                                         bool(restart) and restart["state"] == "Idle",
+    }
+
+
+
 # What each scenario prints besides the checks. The whole summary is in summary.json.
 SHOWN = {
     "power": ["plugin", "record_sectors", "header_sector", "tally"],
     "pause": ["plugin", "lines_sent", "status", "card", "record", "stats"],
     "storm": ["plugin", "burst", "log", "alarm_kept", "error_on_card"],
+    "remount": ["plugin", "steps"],
 }
 
 
@@ -569,7 +677,8 @@ def main():
     checks = {}
     path = os.path.join(args.run, "summary.json")
     try:
-        checks = {"power": run_power, "pause": run_pause, "storm": run_storm}[args.scenario](args, summary)
+        checks = {"power": run_power, "pause": run_pause, "storm": run_storm,
+                  "remount": run_remount}[args.scenario](args, summary)
     finally:
         summary["checks"] = checks
         summary["passed"] = bool(checks) and all(checks.values())

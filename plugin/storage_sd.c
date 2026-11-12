@@ -62,6 +62,10 @@
   A write counts as done once it is in RAM. What goes to the event log as failed
   writes (STORAGE) are the sectors the card refuses, and writes that couldn't be
   taken at all.
+
+  While the card is unmounted nothing is written to it, and when it is mounted
+  again the writes only carry on if FLIGHT.DAT is still in the same sectors (see
+  "Card changes" below).
 */
 
 #include "driver.h"
@@ -80,6 +84,7 @@
 
 #include "grbl/hal.h"
 #include "grbl/report.h"
+#include "grbl/vfs.h"
 
 #include "storage.h"
 #include "event_log.h"
@@ -600,10 +605,10 @@ static bool make_file (void)
     return ok;
 }
 
-// Finds the card sector behind each file sector we use. Reading a byte through FatFs
-// leaves the sector in the file's buffer and its number in f.sect, and reading that
-// sector straight from the card has to give the same data.
-static bool map_file (void)
+// Finds the card sector behind each file sector we use, into map. Reading a byte
+// through FatFs leaves the sector in the file's buffer and its number in f.sect, and
+// reading that sector straight from the card has to give the same data.
+static bool map_file (LBA_t *map)
 {
     FIL f;
     UINT got;
@@ -613,14 +618,88 @@ static bool map_file (void)
     for(uint_fast8_t i = 0; ok && i < SD_MAPPED; i++) {
         ok = f_lseek(&f, file_sector(i) * SD_SECTOR) == FR_OK && f_read(&f, &byte, 1, &got) == FR_OK && got == 1 && f.sect != 0;
         if(ok) {
-            lba[i] = f.sect;
-            ok = disk_read(fs->pdrv, tx, lba[i], 1) == RES_OK && memcmp(tx, f.buf, SD_SECTOR) == 0;
+            map[i] = f.sect;
+            ok = disk_read(fs->pdrv, tx, map[i], 1) == RES_OK && memcmp(tx, f.buf, SD_SECTOR) == 0;
         }
     }
 
     f_close(&f);
 
     return ok;
+}
+
+// Card changes
+
+// grblHAL unmounts the card ("/") for $FU and when card detect says it has gone, and
+// mounts it again for $FM and when it is back. Writes stop at the unmount. At the mount
+// they carry on only if FLIGHT.DAT is in the same sectors as before, which means the
+// same card with the file untouched. On any other card, or with FLIGHT.DAT deleted or
+// made again on a PC, the recorder stays off the card until a restart: the event log's
+// header in RAM points at slots on the old card.
+
+static on_vfs_mount_ptr on_vfs_mount;
+static on_vfs_unmount_ptr on_vfs_unmount;
+static bool changed = false;        // the card isn't the one mapped, off until a restart
+
+static void onVfsUnmount (const char *path)
+{
+    if(on_vfs_unmount)
+        on_vfs_unmount(path);
+
+    if(ready && !strcmp(path, "/")) {
+        ready = false;
+        report_message("Flight recorder: SD card unmounted, the record isn't saved until it's back", Message_Warning);
+    }
+}
+
+static void card_mounted (void)
+{
+    LBA_t map[SD_MAPPED];
+    FILINFO info;
+    bool was_ready = ready;
+
+    ready = false;
+    changed = !((fs = sdcard_getfs()) && f_stat(SD_PATH, &info) == FR_OK && info.fsize == SD_FILE_SIZE &&
+                 map_file(map) && memcmp(map, lba, sizeof(lba)) == 0);
+
+    if(changed) {
+        report_message("Flight recorder: FLIGHT.DAT isn't where it was on the SD card, the record isn't saved until a restart", Message_Warning);
+        return;
+    }
+
+#if !FR_SD_FATFS_WRITES
+    // The write that was going out may not have got there, so send all that RAM holds again.
+    card.busy = card.check = failing = false;
+    record.pending = record.known;
+    header.dirty = header.size != 0;
+    for(cache_t *c = cache; c < cache + SD_CACHE; c++) {
+        if(c->index >= 0 && !c->dirty) {
+            c->dirty = true;
+            c->dirtied = ++dirty_count;
+        }
+    }
+    flush_requested = true;
+#endif
+
+    ready = true;
+
+    if(!was_ready)
+        report_message("Flight recorder: SD card back, saving the record again", Message_Info);
+}
+
+static void onVfsMount (const char *path, const vfs_t *vfs_fs, vfs_st_mode_t mode)
+{
+    static bool checking = false;
+
+    if(on_vfs_mount)
+        on_vfs_mount(path, vfs_fs, mode);
+
+    // sdcard_getfs() can mount the card itself, and that comes back here.
+    if(!changed && !checking && !strcmp(path, "/")) {
+        checking = true;
+        card_mounted();
+        checking = false;
+    }
 }
 
 static bool sd_init (void)
@@ -636,7 +715,7 @@ static bool sd_init (void)
         return false;
     }
 
-    if(!map_file()) {
+    if(!map_file(lba)) {
         report_message("Flight recorder: FLIGHT.DAT on the SD card doesn't read back", Message_Warning);
         return false;
     }
@@ -651,6 +730,11 @@ static bool sd_init (void)
         c->index = -1;
 
     ready = true;
+
+    on_vfs_mount = vfs.on_mount;
+    vfs.on_mount = onVfsMount;
+    on_vfs_unmount = vfs.on_unmount;
+    vfs.on_unmount = onVfsUnmount;
 
     return true;
 }
