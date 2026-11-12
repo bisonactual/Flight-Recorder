@@ -4,9 +4,9 @@ This project adds a flight recorder to GRBLHAL to allow for safe project stops a
 
 It is supported by [Bearsender](https://bisonactual.github.io/bearsender/bearsender.html) and will be supported by Bearcam on release, along with the full scurve and lookahead functions which are not yet available.
 
-This addon is highly experimental, needs either a hardware change (the FRAM) or the uFlexiNET module's SD card, and only currently supports the Flexihal by Expatria: an A7 with the FRAM, or an A6/A7 with the uFlexiNET. It very likely voids any warranty or customer support from Expatria. Use at your own risk.
+This addon is highly experimental, requires hardware changes, and only currently supports the Flexihal-A7 by Expatria. It very likely voids any warranty or customer support from Expatria. Use at your own risk.
 
-This is part one of my changes, and does not include a spool. It adds a flight recorder that saves the position of your program as it runs (at most every 20 ms on FRAM, or 100 ms on the SD card), and in the event of communication loss with the sender, retracts and stops the spindle, and allows you to restore it from a supported sender (currently my fork of flexisender.... soon) - it also adds an event log to diagnose EMI etc.
+This is part one of my changes, and does not include a spool. It adds a flight recorder that saves the position of your program every move, and in the event of communication loss with the sender, retracts and stops the spindle, and allows you to restore it from a supported sender (currently my fork of flexisender.... soon) - it also adds an event log to diagnose EMI etc.
 
 Watchdog builds should additionally reboot the board should it be frozen. I suggest 5 seconds as the default setting. You need a watchdog enabled chip to use watchdog functions.
 
@@ -19,10 +19,6 @@ $FLIGHTCLEAR clears it
 $EVENTSCLEAR clears the event log
 
 $WATCHDOGTEST makes the board freeze so you can test it with a watchdog build (only works in idle or alarm)
-
-$FLIGHTSD shows how the SD card is doing, when the record is on the SD card ($FLIGHTSD=R resets the counts)
-
-$794 sets how often the record is written while the line changes, in ms. Leave it at 0 for the default, 20 ms on FRAM or 100 ms on the SD card
 
 Alarm 80 means the connection was lost mid-job. The tool was retracted and the spindle stopped, so you can resume from the flight record.
 
@@ -47,26 +43,11 @@ Bish Bash Bosh.
 
 (Strongly suggest you bench test this instead of sticking it straight on a pnc. USE AT YOUR OWN RISK)
 
-### Using the SD card instead of FRAM
-
-If your board has the uFlexiNET module (network and micro-SD, on the 40-pin header), the recorder can keep its record on the SD card instead, so no soldering. Flash one of the `_FR_SD` builds (`FLEXI_HAL_PRINTNC_ETH_SD_FR_SD_...uf2`, `..._4X_FR_SD_...`, `_WD` for the watchdog) and put a card in. `$I` then shows `[PLUGIN:Flight Recorder (SD card) v0.4.0]`.
-
-On a board with the stock EEPROM at U27, use the `_FR_SD` builds and not the plain `_FR` ones. Those treat the chip at U27 as FRAM and skip the EEPROM's write delays, so grblHAL's own settings wouldn't save properly. A `_FR_SD` build is fine on a board with the FRAM too. It uses the FRAM, and settings just save a little slower.
-
-- At the first boot the recorder makes `FLIGHT.DAT` on the card (8 MB, hidden, read only). After that it writes the file's sectors directly, not through the file system, and leaves your G-code files alone.
-- The record is written at most every 100 ms while the line changes, and events about once a second, apart from alarms, a lost link, resets and stream timeouts, which go at once. So a power cut can lose the last tenth of a second of the record and the last second of minor events, like an error reply.
-- It doesn't wait for the card, so the pauses cards take now and then (up to 250 ms is allowed) don't hold up the machine or the network, which shares the card's bus.
-- Use a good card, an industrial or high-endurance one (pSLC, with power-loss protection if you can get it). A cheap card that loses power mid-write can damage more than the sector it was writing. FRAM is still the safer choice.
-- While the card is unmounted (`$FU`, or taken out with card detect) nothing is saved. When it's back the recorder carries on only if it's the same card with `FLIGHT.DAT` untouched. With any other card it stays off the card until a reboot, and says so. So after changing the card, reboot.
-- `$FLIGHTSD` shows how the card is doing. `apart=` should be 8192 or more: the two record copies and the log sit 4 MB apart on the card, so a card that damages more than it was writing can't take them all.
-
-So far it has only been tested in the simulator. Hardware tests are next.
-
 
 In detail:
 
 A grblHAL plugin that keeps a record of the running job in non-volatile memory
-(the Flexi-HAL A7's I2C FRAM, or the SD card in the uFlexiNET module), so a sender can resume after the PC, the link or
+(the Flexi-HAL A7's I2C FRAM), so a sender can resume after the PC, the link or
 the controller has gone away, and that gets the tool out of the cut when the
 stream stops. Open source (GPLv3, like grblHAL).
 
@@ -87,8 +68,6 @@ stream stops. Open source (GPLv3, like grblHAL).
   their cause (brown-out, reset pin, watchdog), alarms, error replies, inputs
   and limit switches tripping, the sender's link coming and going, and Modbus
   timeouts and CRC errors. Aimed at the "silent" and annoying faults EMI causes.
-  On FRAM each event is written as it happens. On the SD card they go out about
-  once a second, apart from alarms, lost links, resets and stream timeouts.
   
   If the controller itself hangs, the
   hardware watchdog resets it after `$793` seconds (3–10, default 5), which
@@ -99,16 +78,13 @@ stream stops. Open source (GPLv3, like grblHAL).
 
 ## Supported hardware
 
- - **Flexi-HAL Rev A7** with the EEPROM at **U27** replaced by I2C FRAM (I used Infineon, 1 Mbit / 128 KB I2C FRAM, SOIC-8). You must use a watchdog enabled chip to use the watchdog functions.
+ - **Flexi-HAL Rev A7 ONLY** with the EEPROM at **U27** replaced by I2C FRAM (I used Infineon, 1 Mbit / 128 KB I2C FRAM, SOIC-8). This direct
+  replacement is the only supported storage. You must use a watchdog enabled chip to use the watchdog functions.
   - grblHAL's settings keep the first 16 KB, as before; the recorder uses the
     space after them.
   - At start-up the recorder checks the chip is that FRAM and leaves it alone
-    otherwise: a 16 KB part would have its settings overwritten, and an EEPROM
-    would wear out.
- - Or **Flexi-HAL A6/A7 with the uFlexiNET module** and a micro-SD card in it, with
-   one of the `_FR_SD` builds, for boards without the FRAM (see above).
- - Neither: the recorder reports `Flight Recorder (no storage)` and only does the
-   stream loss retract.
+    otherwise (it reports `Flight Recorder (no storage)`): a 16 KB part would
+    have its settings overwritten, and an EEPROM would wear out.
 - **Leave MPG off**
 - Connection over **USB** or the **uFlexiNET** network module works
 
