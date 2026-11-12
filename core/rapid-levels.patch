@@ -1,0 +1,42 @@
+diff --git a/grbl.h b/grbl.h
+index 7ac299e..f3274c7 100644
+--- a/grbl.h
++++ b/grbl.h
+@@ -145,6 +145,9 @@
+ #define CMD_PID_REPORT                      0xA2 // (162)
+ #define CMD_TOOL_ACK                        0xA3 // (163)
+ #define CMD_PROBE_CONNECTED_TOGGLE          0xA4 // (164)
++// Two more rapid levels, 75% and 10%. At the top of the free block so later core codes don't land on them.
++#define CMD_OVERRIDE_RAPID_75               0xAE // (174)
++#define CMD_OVERRIDE_RAPID_10               0xAF // (175)
+ // The following character codes are reserved for plugin use
+ #define CMD_MACRO_0 						0xB0 // (176)
+ #define CMD_MACRO_1 						0xB1 // (177)
+diff --git a/protocol.c b/protocol.c
+index ad00169..437850e 100644
+--- a/protocol.c
++++ b/protocol.c
+@@ -668,6 +668,14 @@ bool protocol_exec_rt_system (void)
+                 case CMD_OVERRIDE_RAPID_LOW:
+                     new_r_override = RAPID_OVERRIDE_LOW;
+                     break;
++
++                case CMD_OVERRIDE_RAPID_75:
++                    new_r_override = 75;
++                    break;
++
++                case CMD_OVERRIDE_RAPID_10:
++                    new_r_override = 10;
++                    break;
+             }
+ 
+             new_f_override = constrain(new_f_override, MIN_FEED_RATE_OVERRIDE, MAX_FEED_RATE_OVERRIDE);
+@@ -946,6 +954,8 @@ ISR_CODE bool ISR_FUNC(protocol_enqueue_realtime_command)(uint8_t c)
+         case CMD_OVERRIDE_RAPID_RESET:
+         case CMD_OVERRIDE_RAPID_MEDIUM:
+         case CMD_OVERRIDE_RAPID_LOW:
++        case CMD_OVERRIDE_RAPID_75:
++        case CMD_OVERRIDE_RAPID_10:
+             drop = true;
+             enqueue_feed_override(c);
+             break;

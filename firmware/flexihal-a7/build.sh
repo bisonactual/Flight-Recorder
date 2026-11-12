@@ -3,8 +3,8 @@
 # with the recorder added, as UF2 files for their bootloader, the same as their releases.
 #
 # Usage: firmware/flexihal-a7/build.sh [variant ...]
-#   no arguments  every variant
-#   list          show the variants
+#   no arguments  every variant we release (not the _nokeypad diagnostic builds)
+#   list          show the variants, the diagnostic builds too
 #   variant       e.g. f446re_flexi_cnc_printnc_eth_sd_fr
 #
 # Needs git, python3 and PlatformIO (pio) on PATH. The driver is checked out under
@@ -20,6 +20,7 @@ driver=$build/STM32F4xx
 out=$here/out
 
 all=$(sed -n 's/^\[env:\(.*\)\]$/\1/p' "$here/platformio.local.ini")
+releases=$(grep -v '_nokeypad$' <<< "$all")
 if [ "${1:-}" = list ]; then
     echo "$all"
     exit 0
@@ -45,10 +46,14 @@ if ! git -C "$driver/rgb" cat-file -e "$RGB_COMMIT^{commit}" 2>/dev/null; then
 fi
 git -C "$driver/rgb" checkout -q -f "$RGB_COMMIT"
 
-# 2. Our patches to the core (executing line, plugin start-up, Modbus counters) and the status light plugin.
+# 2. Our patches to the core (executing line, plugin start-up, Modbus counters, rapid levels),
+#    the driver's I2C wait, the keypad's key read and the status light plugin.
 git -C "$driver/grbl" apply "$root/core/executing-line.patch"
 git -C "$driver/grbl" apply "$root/core/plugin-init.patch"
 git -C "$driver/grbl" apply "$root/core/modbus-stats.patch"
+git -C "$driver/grbl" apply "$root/core/rapid-levels.patch"
+git -C "$driver" apply "$here/patches/i2c-wait-ready.patch"
+git -C "$driver/keypad" apply "$here/patches/keypad-strobe-task.patch"
 git -C "$driver/rgb" apply "$here/patches/rgb-bit-count.patch"
 
 # 3. The plugin, as a PlatformIO library next to Expatria's.
@@ -60,7 +65,7 @@ cp "$here/platformio.local.ini" "$driver/platformio.local.ini"
 
 variants=("$@")
 if [ ${#variants[@]} -eq 0 ]; then
-    mapfile -t variants <<< "$all"
+    mapfile -t variants <<< "$releases"
 fi
 
 # 5. Build. Expatria's post-build script writes FLEXI_HAL_<variant>_<driver version>.uf2

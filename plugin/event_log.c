@@ -35,13 +35,18 @@
     LINK         the sender's USB port or network client coming and going
     MODBUS       Modbus timeouts, CRC errors, exceptions and retries, per second
     JOB          job start, stop, retract and end
-    STORAGE      storage writes that failed, logged once writes work again
+    STORAGE      storage writes that failed, at most one line a minute
     SPINDLE_OFF  the spindle stop at boot after an unexpected reset
 
   Inputs and limits come in on interrupts, which only latch them. The realtime
   poll writes them out. If the same event comes again within a second it is
   counted in the existing entry instead of taking a new one, so a chattering
   switch or a burst of the same error doesn't wipe out the history.
+
+  The storage waits for the I2C bus by running the realtime chain, and code in
+  that chain can log. So an event that comes in while one of our writes is
+  waiting is held back and written after it, and the log is never written from
+  inside its own write.
 */
 
 // Before driver.h, see flight_recorder.c.
@@ -72,6 +77,8 @@
 #define LOG_ENTRIES     (FR_LOG_BASE + 16)
 #define REPEAT_WINDOW   1000u           // ms
 #define MODBUS_PERIOD   1000u           // ms
+#define STORAGE_PERIOD  60000u          // ms, at most one STORAGE event this often
+#define HELD_EVENTS     4               // events that can wait for a write to finish
 
 // The inputs worth logging are the ones noise can trip. Probe contact, block delete,
 // single block and so on are just normal operation.
@@ -104,7 +111,27 @@ static volatile uint_fast16_t limits_latched = 0;
 
 static uint8_t link_flags = 0xFF;
 static stream_type_t link_type;
-static uint32_t storage_failures = 0, storage_recovered = 0;
+
+// Events that came in while a write was waiting for the bus.
+typedef struct {
+    uint32_t time, data;
+    uint8_t type, code;
+} held_event_t;
+
+static held_event_t held[HELD_EVENTS];
+static uint_fast8_t n_held = 0;
+
+// Storage writes that failed since the last STORAGE event, and how many failed again on the
+// retry. Failures while writing a STORAGE event go in the quiet counts, which are added to the
+// next one but never start one, so a bus that keeps failing gives one a minute and no more.
+static struct {
+    uint32_t failed, failed_again;
+    uint32_t quiet_failed, quiet_failed_again;
+    uint32_t last_logged;
+    bool logged;
+} storage = {0};
+static uint_fast8_t writing = 0;
+static bool logging_storage = false;
 
 static control_signals_callback_ptr control_interrupt;
 static limit_interrupt_callback_ptr limit_interrupt;
@@ -126,27 +153,52 @@ static uint8_t crc8 (const uint8_t *data, uint32_t size)
     return crc;
 }
 
-void fr_log_storage_result (bool ok)
+// All of the recorder's writes come through here. A failed write is tried again straight away,
+// which is enough when the bus was only busy for a moment.
+bool fr_log_write (uint32_t addr, const void *data, uint32_t size)
 {
-    if(!ok)
-        storage_failures++;
-    else if(storage_failures) {
-        storage_recovered += storage_failures;
-        storage_failures = 0;
+    writing++;
+
+    bool ok = fr_storage_write(addr, data, size);
+
+    if(!ok) {
+        ok = fr_storage_write(addr, data, size);
+        if(logging_storage) {
+            storage.quiet_failed++;
+            storage.quiet_failed_again += !ok;
+        } else {
+            storage.failed++;
+            storage.failed_again += !ok;
+        }
     }
+
+    writing--;
+
+    return ok;
 }
 
-static void write_header (void)
+bool fr_log_writing (void)
 {
-    header.magic = LOG_MAGIC;
-    header.check = crc8((const uint8_t *)&header, offsetof(log_header_t, check));
-    fr_log_storage_result(fr_storage_write(LOG_HEADER, &header, sizeof(log_header_t)));
+    return writing != 0;
 }
 
-static void write_slot (uint16_t slot, fr_event_t *event)
+static bool write_header (void)
 {
-    event->check = crc8((const uint8_t *)event, offsetof(fr_event_t, check));
-    fr_log_storage_result(fr_storage_write(LOG_ENTRIES + slot * sizeof(fr_event_t), event, sizeof(fr_event_t)));
+    log_header_t copy = header;
+
+    copy.magic = LOG_MAGIC;
+    copy.check = crc8((const uint8_t *)&copy, offsetof(log_header_t, check));
+
+    return fr_log_write(LOG_HEADER, &copy, sizeof(log_header_t));
+}
+
+static bool write_slot (uint16_t slot, const fr_event_t *event)
+{
+    fr_event_t copy = *event;
+
+    copy.check = crc8((const uint8_t *)&copy, offsetof(fr_event_t, check));
+
+    return fr_log_write(LOG_ENTRIES + slot * sizeof(fr_event_t), &copy, sizeof(fr_event_t));
 }
 
 static bool read_slot (uint16_t slot, fr_event_t *event)
@@ -178,11 +230,11 @@ static void rebuild_header (void)
     }
 }
 
+// If the write fails even on the retry, the next flush tries again.
 static void flush_last_event (void)
 {
     if(last_changed) {
-        write_slot(last_slot, &last_event);
-        last_changed = false;
+        last_changed = !write_slot(last_slot, &last_event);
         last_flushed = hal.get_elapsed_ticks();
     }
 }
@@ -194,16 +246,16 @@ static void append_event (fr_event_type_t type, uint8_t code, uint32_t data, uin
     last_event = (fr_event_t){ .time = now, .data = data, .boot = boot, .index = header.next_index,
                                .type = (uint8_t)type, .code = code };
     last_slot = header.head;
-    write_slot(last_slot, &last_event);
+    have_last = true;
+    last_seen = last_flushed = now;
 
     header.next_index++;
     header.head = (header.head + 1) % FR_LOG_EVENTS;
     if(header.count < FR_LOG_EVENTS)
         header.count++;
-    write_header();
 
-    have_last = true;
-    last_seen = last_flushed = now;
+    last_changed = !write_slot(last_slot, &last_event);
+    write_header();
 }
 
 // Logging
@@ -228,12 +280,8 @@ static uint32_t add_saturating (uint32_t packed, uint32_t more)
     return sum;
 }
 
-void fr_log_event (fr_event_type_t type, uint8_t code, uint32_t data)
+static void log_event (fr_event_type_t type, uint8_t code, uint32_t data, uint32_t now)
 {
-    if(!log_ready)
-        return;
-
-    uint32_t now = hal.get_elapsed_ticks();
     uint32_t window = REPEAT_WINDOW + (type == FR_Event_Modbus ? MODBUS_PERIOD : 0);
 
     if(have_last && last_event.boot == boot && last_event.type == type && last_event.code == code &&
@@ -246,6 +294,50 @@ void fr_log_event (fr_event_type_t type, uint8_t code, uint32_t data)
         last_changed = true;
     } else
         append_event(type, code, data, now);
+}
+
+// Held events go in at the next poll. If more than HELD_EVENTS come in during one write, which
+// would take a burst of different events within a couple of milliseconds, the rest are dropped.
+void fr_log_event (fr_event_type_t type, uint8_t code, uint32_t data)
+{
+    if(!log_ready)
+        return;
+
+    uint32_t now = hal.get_elapsed_ticks();
+
+    if(writing) {
+        if(n_held < HELD_EVENTS)
+            held[n_held++] = (held_event_t){ .time = now, .data = data, .type = (uint8_t)type, .code = code };
+    } else
+        log_event(type, code, data, now);
+}
+
+// Writing a held event can hold back another, so keep going until there are none.
+static void write_held (void)
+{
+    while(n_held) {
+        held_event_t event = held[0];
+        memmove(held, held + 1, --n_held * sizeof(held_event_t));
+        log_event((fr_event_type_t)event.type, event.code, event.data, event.time);
+    }
+}
+
+// At most one STORAGE event a minute, and only for failures outside STORAGE events.
+static void log_storage (uint32_t now)
+{
+    if(!storage.failed || (storage.logged && now - storage.last_logged < STORAGE_PERIOD))
+        return;
+
+    uint32_t failed = storage.failed + storage.quiet_failed;
+    uint32_t again = storage.failed_again + storage.quiet_failed_again;
+
+    storage.failed = storage.failed_again = storage.quiet_failed = storage.quiet_failed_again = 0;
+    storage.logged = true;
+    storage.last_logged = now;
+
+    logging_storage = true;
+    log_event(FR_Event_Storage, again > 0xFF ? 0xFF : (uint8_t)again, failed, now);
+    logging_storage = false;
 }
 
 // Where the events come from
@@ -335,6 +427,8 @@ void fr_log_poll (uint32_t now)
     if(!log_ready)
         return;
 
+    write_held();
+
     uint32_t inputs = (uint32_t)hal.set_value_atomic(&inputs_latched, 0);
     if(inputs)
         fr_log_event(FR_Event_Input, 0, inputs);
@@ -349,14 +443,14 @@ void fr_log_poll (uint32_t now)
     poll_modbus(now);
 #endif
 
-    if(storage_recovered) {
-        uint32_t failed = storage_recovered;
-        storage_recovered = 0;
-        fr_log_event(FR_Event_Storage, 0, failed);
-    }
+    log_storage(now);
 
-    if(last_changed && now - last_flushed >= REPEAT_WINDOW)
+    // A STORAGE event's own writes stay quiet here too.
+    if(last_changed && now - last_flushed >= REPEAT_WINDOW) {
+        logging_storage = last_event.type == FR_Event_Storage;
         flush_last_event();
+        logging_storage = false;
+    }
 }
 
 // Reporting
@@ -444,7 +538,10 @@ static void describe_event (const fr_event_t *event, char *buf, size_t size)
             break;
 
         case FR_Event_Storage:
-            snprintf(buf, size, "STORAGE|failed_writes=%lu", (unsigned long)event->data);
+            if(event->code)
+                snprintf(buf, size, "STORAGE|failed_writes=%lu|failed_again=%u", (unsigned long)event->data, event->code);
+            else
+                snprintf(buf, size, "STORAGE|failed_writes=%lu", (unsigned long)event->data);
             break;
 
         case FR_Event_SpindleOff: {

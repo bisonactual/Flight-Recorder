@@ -4,7 +4,7 @@ The plugin keeps a record of the job in non-volatile memory (the A7's FRAM; a
 file in the simulator). It survives the PC, the link and the controller going
 away. This page is the whole interface.
 
-`$I` reports `[PLUGIN:Flight Recorder v0.3.0]` when it's running, or
+`$I` reports `[PLUGIN:Flight Recorder v0.4.0]` when it's running, or
 `Flight Recorder (no storage)` when the board has no supported FRAM; then
 these commands are not available.
 
@@ -100,7 +100,7 @@ between polls, so several trips in a few milliseconds count as one.
 | `LINK` | `usb` / `network`, `connected` / `disconnected` | the sender's USB port opening or closing, a network client arriving or leaving |
 | `MODBUS` | `timeouts`, `crc` (errors), `exceptions`, `retries`, each up to 255 | once a second while the Modbus link (the VFD) has trouble |
 | `JOB` | `start` with `job=`; or the state (`Stopped`, `Retracted`, `Completed`), `why=` and `ln=` | the job record changing |
-| `STORAGE` | `failed_writes=` | FRAM writes that failed, logged once they work again |
+| `STORAGE` | `failed_writes=`; `failed_again=` when some failed on the retry too | FRAM writes that failed, at most one line a minute. A failed write is tried again straight away; `failed_again` (up to 255) counts the ones that failed a second time and were left for later |
 | `SPINDLE_OFF` | `after=` job, watchdog, brown-out | at boot after an unexpected reset: a job was running, the watchdog fired, or the supply dipped. grblHAL switches the spindle and coolant off at every start; this records that it mattered. The board sends the stop again 2 s later, for a Modbus VFD that missed the first |
 
 Notes: the reset cause is read from the processor's reset flags as the

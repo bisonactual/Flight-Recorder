@@ -1,0 +1,48 @@
+diff --git a/Src/i2c.c b/Src/i2c.c
+index 75c6273..ddd624e 100644
+--- a/Src/i2c.c
++++ b/Src/i2c.c
+@@ -257,14 +257,18 @@ i2c_cap_t i2c_start (void)
+     return cap;
+ }
+ 
++// Far longer than any transfer here takes, so it only ends a wait for one that never finishes.
++#define I2C_WAIT_MS 50
++
++// Waits until the port is done with the last transfer. The bus going busy isn't enough: a transfer
++// started without blocking (the keypad's status goes by DMA) has the port busy for a moment before
++// its START is on the bus, and the HAL refuses a new transfer until the port is ready again.
+ static inline __attribute__((always_inline)) bool wait_ready (void)
+ {
+-#ifdef I2C_FASTMODE
+-    while(await_rx || (i2c_port.State != I2C_STATE_READY && __HAL_FMPI2C_GET_FLAG(&i2c_port, I2C_FLAG_BUSY) != RESET)) {
+-#else
+-    while(await_rx || (i2c_port.State != I2C_STATE_READY && __HAL_I2C_GET_FLAG(&i2c_port, I2C_FLAG_BUSY) != RESET)) {
+-#endif
+-        if(!hal.stream_blocking_callback())
++    uint32_t ms = hal.get_elapsed_ticks();
++
++    while(await_rx || i2c_port.State != I2C_STATE_READY) {
++        if(!hal.stream_blocking_callback() || hal.get_elapsed_ticks() - ms > I2C_WAIT_MS)
+             return false;
+     }
+ 
+@@ -345,6 +349,18 @@ void HAL_I2C_MasterRxCpltCallback (I2C_HandleTypeDef *hi2c)
+     }
+ }
+ 
++// A key read that isn't answered (NACK) ends here rather than in the callback above, so it
++// has to clear the wait as well, or every transfer after it would wait for it.
++#ifdef I2C_FASTMODE
++void HAL_FMPI2C_ErrorCallback (FMPI2C_HandleTypeDef *hi2c)
++#else
++void HAL_I2C_ErrorCallback (I2C_HandleTypeDef *hi2c)
++#endif
++{
++    await_rx = false;
++    keypad_callback = NULL;
++}
++
+ #if TRINAMIC_ENABLE && TRINAMIC_I2C
+ 
+ static uint16_t axis = 0xFF;

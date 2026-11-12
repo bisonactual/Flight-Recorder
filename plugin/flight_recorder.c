@@ -109,6 +109,11 @@ static uint32_t newest_slot = 0;
 static bool record_changed = false;
 static uint32_t last_write = 0;
 
+// The storage waits for the I2C bus by running the realtime chain, which comes back into
+// onExecuteRealtime(). While the recorder is busy (its poll, a command, or one of its writes)
+// that only passes the call on, so the recorder never runs inside itself.
+static bool busy = false;
+
 static uint32_t last_line = 0;
 static uint32_t starved_since = 0;
 static volatile uint32_t last_delay = 0;    // when a dwell or spindle spin-up delay last ran
@@ -161,23 +166,33 @@ static bool is_valid_record (const fr_record_t *rec)
 
 // There are two copies and each write goes to the older one, so a power cut in the
 // middle of a write still leaves the previous record. If a write fails we try the
-// same slot again next time and never touch the newer copy.
+// same slot again next time and never touch the newer copy. The write is made from a
+// copy, since a hook run while it waits for the bus can change the record.
 static void write_record (void)
 {
     if(!have_storage)
         return;
 
+    // Asked for while another write waits for the bus: the next poll does it.
+    if(fr_log_writing()) {
+        record_changed = true;
+        return;
+    }
+
     record.magic = FR_MAGIC;
     record.seq++;
     record.crc = crc32((const uint8_t *)&record, offsetof(fr_record_t, crc));
 
-    bool ok = fr_storage_write((newest_slot ^ 1) * FR_SLOT_SIZE, &record, sizeof(fr_record_t));
+    fr_record_t copy = record;
+    uint32_t slot = newest_slot ^ 1;
 
-    fr_log_storage_result(ok);
-    if(ok)
-        newest_slot ^= 1;
+    record_changed = false;
 
-    record_changed = !ok;
+    if(fr_log_write(slot * FR_SLOT_SIZE, &copy, sizeof(fr_record_t)))
+        newest_slot = slot;
+    else
+        record_changed = true;
+
     last_write = hal.get_elapsed_ticks();
 }
 
@@ -466,15 +481,10 @@ static void sender_lost (void)
     report_message("Flight recorder: sender link lost", Message_Warning);
 }
 
-static void onExecuteRealtime (sys_state_t state)
+static void realtime_poll (sys_state_t state)
 {
-    on_execute_realtime(state);
-
     uint32_t now = hal.get_elapsed_ticks();
 
-#if FR_WATCHDOG_ENABLE
-    watchdog_poll();
-#endif
     spindle_stop_poll(now);
 
     if(!have_storage)
@@ -545,6 +555,22 @@ static void onExecuteRealtime (sys_state_t state)
 
     if(record_changed && now - last_write >= WRITE_INTERVAL)
         write_record();
+}
+
+static void onExecuteRealtime (sys_state_t state)
+{
+    on_execute_realtime(state);
+
+#if FR_WATCHDOG_ENABLE
+    watchdog_poll();
+#endif
+
+    if(busy || fr_log_writing())
+        return;
+
+    busy = true;
+    realtime_poll(state);
+    busy = false;
 }
 
 // Core hooks
@@ -667,14 +693,22 @@ static status_code_t start_job (sys_state_t state, char *args)
     return Status_OK;
 }
 
+// The commands mark the recorder busy while they run: their writes to the stream can block,
+// and a blocking write runs the realtime chain as well.
+
 static status_code_t cmd_flight (sys_state_t state, char *args)
 {
+    bool was_busy = busy;
+    status_code_t status = Status_OK;
+
+    busy = true;
     if(args)
-        return start_job(state, args);
+        status = start_job(state, args);
+    else
+        report_record();
+    busy = was_busy;
 
-    report_record();
-
-    return Status_OK;
+    return status;
 }
 
 static status_code_t cmd_flight_clear (sys_state_t state, char *args)
@@ -684,6 +718,9 @@ static status_code_t cmd_flight_clear (sys_state_t state, char *args)
     if(record.state == FR_Running || retract_phase != Retract_Idle)
         return Status_IdleError;
 
+    bool was_busy = busy;
+
+    busy = true;
     memset(&record.mpos, 0, sizeof(record.mpos));
     record.state = FR_Idle;
     record.reason = FR_Reason_None;
@@ -693,22 +730,30 @@ static status_code_t cmd_flight_clear (sys_state_t state, char *args)
     record.flags.value = 0;
     write_record();
     report_record();
+    busy = was_busy;
 
     return Status_OK;
 }
 
 static status_code_t cmd_events (sys_state_t state, char *args)
 {
+    bool was_busy = busy;
     uint32_t count = args ? strtoul(args, NULL, 10) : 100;
 
+    busy = true;
     fr_log_report(count ? count : 100);
+    busy = was_busy;
 
     return Status_OK;
 }
 
 static status_code_t cmd_events_clear (sys_state_t state, char *args)
 {
+    bool was_busy = busy;
+
+    busy = true;
     fr_log_clear();
+    busy = was_busy;
 
     return Status_OK;
 }

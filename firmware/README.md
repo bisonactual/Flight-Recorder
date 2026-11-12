@@ -29,10 +29,18 @@ Each variant adds to Expatria's build:
 - `MPG_ENABLE=0`: MPG stays off with the FRAM, whatever the parent build says;
 - `core/executing-line.patch`, `core/plugin-init.patch` and
   `core/modbus-stats.patch` on the grblHAL core (the last only lets the
-  event log read the Modbus driver's own error counters).
+  event log read the Modbus driver's own error counters);
+- `core/rapid-levels.patch`: two more rapid override levels, 75% on `0xAE`
+  and 10% on `0xAF`. `0x95`, `0x96` and `0x97` still give 100, 50 and 25%.
+  Firmware without the patch ignores the two codes. (Upstream grblHAL has
+  since given `0x98` to a 5% level; we leave it alone.)
+- `flexihal-a7/patches/i2c-wait-ready.patch` and `keypad-strobe-task.patch`:
+  two fixes to Expatria's I2C, below.
 
 The variants are written out in `flexihal-a7/platformio.local.ini`, which
-`build.sh` copies into the driver.
+`build.sh` copies into the driver. Each also has a `_nokeypad` build, for
+diagnosis only: the same firmware without the I2C keypad plugin. If FRAM
+writes still fail with it, the trouble on the bus isn't the keypad.
 
 ### Building
 
@@ -44,6 +52,7 @@ inside a venv). Linux, macOS or WSL:
 firmware/flexihal-a7/build.sh list                                   # the variants
 firmware/flexihal-a7/build.sh f446re_flexi_cnc_printnc_eth_sd_fr     # one
 firmware/flexihal-a7/build.sh                                        # all six
+firmware/flexihal-a7/build.sh f446re_flexi_cnc_printnc_eth_sd_fr_nokeypad   # a diagnostic build
 ```
 
 The driver is checked out under `firmware/build/` (or `$FR_BUILD_DIR`); UF2
@@ -67,8 +76,9 @@ Back up the settings first (`$$`) as with any firmware change. The recorder's
 own settings are `$790`–`$793` (see `docs/COMMANDS.md`); it starts after every
 other plugin, so their saved settings stay where they were. Coming from
 v0.2.0, its own settings go back to their defaults once (v0.3.0 added `$793`).
+From v0.3.0 everything carries over: settings, the record and the event log.
 
-After flashing, `$I` should list `[PLUGIN:Flight Recorder v0.3.0]`, and
+After flashing, `$I` should list `[PLUGIN:Flight Recorder v0.4.0]`, and
 `$EVENTS` should show a `BOOT` entry with a real cause: `reset=power-on` after
 plugging in, `reset-pin` after pressing **RST**. `unknown` there means the
 bootloader clears the reset flags: tell us. If `$I` says `Flight Recorder (no
@@ -89,6 +99,17 @@ On the bench, spindle unloaded, Z high:
    Over USB the sender sees the port drop and come back.
 
 ### Where Expatria's published tree needed help
+
+- Its I2C code let a transfer start before the last one had finished with
+  the port. The keypad's status packet to the pendant goes by DMA without
+  waiting, and for a moment after it starts the port is busy but the bus
+  isn't yet. A FRAM write in that moment was refused, which is where the
+  recorder's `STORAGE failed_writes=1` lines came from.
+  `patches/i2c-wait-ready.patch` waits until the port itself is ready (with a
+  50 ms limit), and clears the wait for a key read that nobody answers.
+- Its keypad plugin read the key from the strobe interrupt, which could land
+  in the middle of another transfer. `patches/keypad-strobe-task.patch` moves
+  the read into the main loop, as upstream grblHAL's keypad plugin now does.
 
 - It records a status light (`rgb`) plugin commit that was never pushed
   (`f4b2457`), so a fresh checkout can't fetch it. We use the newest published
