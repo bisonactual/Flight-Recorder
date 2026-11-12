@@ -1,0 +1,52 @@
+{
+ "scenario": "power",
+ "args": {
+  "scenario": "power",
+  "sim": "/home/owl/fr-sd/builds/sd/grblHAL_flexihal_sim",
+  "run": "/home/owl/fr-sd/runs/power-unit64",
+  "seed": 2,
+  "port": 8202,
+  "cycles": 100,
+  "tear_unit": 64,
+  "max_cut": 40,
+  "random_share": 0.25,
+  "stream_seconds": 4.0,
+  "speed": 2.0,
+  "seconds": 20.0,
+  "lines": 4000,
+  "pause": "0.1,200,250",
+  "events": 1000
+ },
+ "plugin": "[PLUGIN:Flight Recorder (SD card) v0.4.0]",
+ "record_sectors": [
+  8256,
+  24640
+ ],
+ "header_sector": [
+  16448
+ ],
+ "tally": {
+  "cycles": 100,
+  "cut_during_write": 20,
+  "cut_at_random_time": 80,
+  "in_flight": {
+   "record": 18,
+   "none": 74,
+   "header": 6,
+   "log": 2
+  },
+  "tear": {
+   "garbage": 17,
+   "old": 7,
+   "erased": 2
+  },
+  "loaded_torn_write": 0,
+  "unreadable_events_max": 0,
+  "boot_died_before_link": 7
+ },
+ "failures": [],
+ "checks": {
+  "every cycle passed": true
+ },
+ "passed": true
+}

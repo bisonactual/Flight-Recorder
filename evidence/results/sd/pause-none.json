@@ -1,0 +1,61 @@
+{
+ "scenario": "pause",
+ "args": {
+  "scenario": "pause",
+  "sim": "/home/owl/fr-sd/builds/sd/grblHAL_flexihal_sim",
+  "run": "/home/owl/fr-sd/runs/pause-none",
+  "seed": 1,
+  "port": 8190,
+  "cycles": 200,
+  "tear_unit": 1,
+  "max_cut": 40,
+  "random_share": 0.25,
+  "stream_seconds": 4.0,
+  "speed": 2.0,
+  "seconds": 20.0,
+  "lines": 4000,
+  "pause": "0,0,0",
+  "events": 1000
+ },
+ "plugin": "[PLUGIN:Flight Recorder (SD card) v0.4.0]",
+ "stats": {
+  "writes": 130.0,
+  "failed": 0.0,
+  "busy_avg": 3.8,
+  "busy_max": 13.0,
+  "pauses": 0.0,
+  "blocked_max_us": 10665.0,
+  "gap_max": 10.0,
+  "apart": 8192.0,
+  "ok": "ok"
+ },
+ "record": {
+  "commits_dense": 124,
+  "lines_behind_max": 12,
+  "superseded_in_ram": 0
+ },
+ "lines_sent": 1271,
+ "status": {
+  "replies": 109,
+  "latency_ms_p50": 22.8,
+  "latency_ms_p99": 36.6,
+  "latency_ms_max": 52.0,
+  "idle_mid_job": 0
+ },
+ "card": {
+  "writes": 130,
+  "long_pauses": 0,
+  "busy_ms_max": 3.995,
+  "record_age_ms_max": 117.9,
+  "disk_calls_over_1ms": 40,
+  "foreground_in_one_disk_call_us_max": 10664,
+  "disk_calls_that_waited_for_the_card": 0,
+  "longest_wait_for_the_card_us": 0
+ },
+ "checks": {
+  "no idle mid-job": true,
+  "never waited for a busy card": true,
+  "foreground gap under 20 ms": true
+ },
+ "passed": true
+}

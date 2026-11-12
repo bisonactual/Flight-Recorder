@@ -1,0 +1,735 @@
+{
+ "scenario": "power",
+ "args": {
+  "scenario": "power",
+  "sim": "/home/owl/fr-sd/builds/sd-compact/grblHAL_flexihal_sim",
+  "run": "/home/owl/fr-sd/runs/power-compact-unit64",
+  "seed": 3,
+  "port": 8203,
+  "cycles": 60,
+  "tear_unit": 64,
+  "max_cut": 40,
+  "random_share": 0.25,
+  "stream_seconds": 4.0,
+  "speed": 2.0,
+  "seconds": 20.0,
+  "lines": 4000,
+  "pause": "0.1,200,250",
+  "events": 1000
+ },
+ "plugin": "[PLUGIN:Flight Recorder (SD card) v0.4.0]",
+ "record_sectors": [
+  8256,
+  8291
+ ],
+ "header_sector": [
+  8257
+ ],
+ "tally": {
+  "cycles": 60,
+  "cut_during_write": 12,
+  "cut_at_random_time": 48,
+  "in_flight": {
+   "none": 46,
+   "record": 9,
+   "header": 3,
+   "log": 2
+  },
+  "tear": {
+   "old": 3,
+   "garbage": 6,
+   "erased": 5
+  },
+  "loaded_torn_write": 0,
+  "unreadable_events_max": 0,
+  "boot_died_before_link": 2
+ },
+ "failures": [
+  {
+   "cycle": 19,
+   "cut_at": 7,
+   "kill_after": null,
+   "died_by_cut": true,
+   "in_flight": {
+    "t": 1520.0,
+    "sector": 8257,
+    "busy": 2.493,
+    "tear": "garbage",
+    "kind": "header"
+   },
+   "last_finished": {
+    "seq": 94,
+    "ln": 2,
+    "boot": 40,
+    "state": 1
+   },
+   "on_card": [
+    {
+     "valid": false,
+     "seq": 188356874,
+     "ln": 2781434166
+    },
+    {
+     "valid": false,
+     "seq": 3575042002,
+     "ln": 4125976501
+    }
+   ],
+   "reported": {
+    "state": "Idle",
+    "why": "none",
+    "job": 0,
+    "ln": 0,
+    "boot": "1",
+    "alarm": "0",
+    "tool": "0",
+    "wcs": "G54",
+    "flags": "00",
+    "mpos": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "unreadable": 0,
+   "checks": {
+    "a copy survived": false,
+    "not older than the last finished": true,
+    "card mounts, SD storage": true,
+    "torn log sector at most": true,
+    "boot reports the newest valid copy": true
+   },
+   "timing": {
+    "boot": 0.55,
+    "run": 1.0,
+    "check": 2.16
+   }
+  },
+  {
+   "cycle": 27,
+   "cut_at": 2,
+   "kill_after": null,
+   "died_by_cut": true,
+   "in_flight": {
+    "t": 324.712,
+    "sector": 8259,
+    "busy": 1.285,
+    "tear": "erased",
+    "kind": "log"
+   },
+   "last_finished": {
+    "seq": 44,
+    "ln": 2,
+    "boot": 16,
+    "state": 2
+   },
+   "on_card": [
+    {
+     "valid": false,
+     "seq": 4294967295,
+     "ln": 4294967295
+    },
+    {
+     "valid": false,
+     "seq": 4294967295,
+     "ln": 4294967295
+    }
+   ],
+   "reported": {
+    "state": "Idle",
+    "why": "none",
+    "job": 0,
+    "ln": 0,
+    "boot": "1",
+    "alarm": "0",
+    "tool": "0",
+    "wcs": "G54",
+    "flags": "00",
+    "mpos": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "unreadable": 0,
+   "checks": {
+    "a copy survived": false,
+    "not older than the last finished": true,
+    "card mounts, SD storage": true,
+    "torn log sector at most": true,
+    "boot reports the newest valid copy": true
+   },
+   "timing": {
+    "boot": 0.55,
+    "run": 0.0,
+    "check": 2.13
+   }
+  },
+  {
+   "cycle": 28,
+   "cut_at": 39,
+   "kill_after": null,
+   "died_by_cut": false,
+   "in_flight": {
+    "t": 5267.037,
+    "sector": 8291,
+    "busy": 3.879,
+    "tear": "garbage",
+    "kind": "record"
+   },
+   "last_finished": {
+    "seq": 8,
+    "ln": 7,
+    "boot": 2,
+    "state": 1
+   },
+   "on_card": [
+    {
+     "valid": false,
+     "seq": 4271904590,
+     "ln": 2238692338
+    },
+    {
+     "valid": false,
+     "seq": 1244493602,
+     "ln": 3682726088
+    }
+   ],
+   "reported": {
+    "state": "Idle",
+    "why": "none",
+    "job": 0,
+    "ln": 0,
+    "boot": "1",
+    "alarm": "0",
+    "tool": "0",
+    "wcs": "G54",
+    "flags": "00",
+    "mpos": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "unreadable": 0,
+   "checks": {
+    "a copy survived": false,
+    "not older than the last finished": true,
+    "card mounts, SD storage": true,
+    "torn log sector at most": true,
+    "boot reports the newest valid copy": true
+   },
+   "timing": {
+    "boot": 0.55,
+    "run": 4.04,
+    "check": 2.12
+   }
+  },
+  {
+   "cycle": 29,
+   "cut_at": 11,
+   "kill_after": null,
+   "died_by_cut": true,
+   "in_flight": {
+    "t": 5128.929,
+    "sector": 8256,
+    "busy": 3.254,
+    "tear": "erased",
+    "kind": "record"
+   },
+   "last_finished": {
+    "seq": 7,
+    "ln": 6,
+    "boot": 2,
+    "state": 1
+   },
+   "on_card": [
+    {
+     "valid": false,
+     "seq": 4294967295,
+     "ln": 4294967295
+    },
+    {
+     "valid": false,
+     "seq": 4294967295,
+     "ln": 4294967295
+    }
+   ],
+   "reported": {
+    "state": "Idle",
+    "why": "none",
+    "job": 0,
+    "ln": 0,
+    "boot": "1",
+    "alarm": "0",
+    "tool": "0",
+    "wcs": "G54",
+    "flags": "00",
+    "mpos": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "unreadable": 0,
+   "checks": {
+    "a copy survived": false,
+    "not older than the last finished": true,
+    "card mounts, SD storage": true,
+    "torn log sector at most": true,
+    "boot reports the newest valid copy": true
+   },
+   "timing": {
+    "boot": 0.55,
+    "run": 4.0,
+    "check": 2.08
+   }
+  },
+  {
+   "cycle": 36,
+   "cut_at": 6,
+   "kill_after": null,
+   "died_by_cut": true,
+   "in_flight": {
+    "t": 1621.055,
+    "sector": 8259,
+    "busy": 3.635,
+    "tear": "erased",
+    "kind": "log"
+   },
+   "last_finished": {
+    "seq": 34,
+    "ln": 2,
+    "boot": 14,
+    "state": 1
+   },
+   "on_card": [
+    {
+     "valid": false,
+     "seq": 4294967295,
+     "ln": 4294967295
+    },
+    {
+     "valid": false,
+     "seq": 4294967295,
+     "ln": 4294967295
+    }
+   ],
+   "reported": {
+    "state": "Idle",
+    "why": "none",
+    "job": 0,
+    "ln": 0,
+    "boot": "1",
+    "alarm": "0",
+    "tool": "0",
+    "wcs": "G54",
+    "flags": "00",
+    "mpos": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "unreadable": 0,
+   "checks": {
+    "a copy survived": false,
+    "not older than the last finished": true,
+    "card mounts, SD storage": true,
+    "torn log sector at most": true,
+    "boot reports the newest valid copy": true
+   },
+   "timing": {
+    "boot": 0.55,
+    "run": 0.97,
+    "check": 2.12
+   }
+  },
+  {
+   "cycle": 37,
+   "cut_at": 5,
+   "kill_after": null,
+   "died_by_cut": true,
+   "in_flight": {
+    "t": 1151.234,
+    "sector": 8256,
+    "busy": 2.181,
+    "tear": "garbage",
+    "kind": "record"
+   },
+   "last_finished": {
+    "seq": 3,
+    "ln": 0,
+    "boot": 2,
+    "state": 1
+   },
+   "on_card": [
+    {
+     "valid": false,
+     "seq": 2589328000,
+     "ln": 1584559499
+    },
+    {
+     "valid": false,
+     "seq": 722637230,
+     "ln": 1512299443
+    }
+   ],
+   "reported": {
+    "state": "Idle",
+    "why": "none",
+    "job": 0,
+    "ln": 0,
+    "boot": "1",
+    "alarm": "0",
+    "tool": "0",
+    "wcs": "G54",
+    "flags": "00",
+    "mpos": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "unreadable": 0,
+   "checks": {
+    "a copy survived": false,
+    "not older than the last finished": true,
+    "card mounts, SD storage": true,
+    "torn log sector at most": true,
+    "boot reports the newest valid copy": true
+   },
+   "timing": {
+    "boot": 0.55,
+    "run": 0.52,
+    "check": 2.13
+   }
+  },
+  {
+   "cycle": 40,
+   "cut_at": 8,
+   "kill_after": null,
+   "died_by_cut": true,
+   "in_flight": {
+    "t": 4372.878,
+    "sector": 8256,
+    "busy": 2.308,
+    "tear": "garbage",
+    "kind": "record"
+   },
+   "last_finished": {
+    "seq": 13,
+    "ln": 2,
+    "boot": 6,
+    "state": 1
+   },
+   "on_card": [
+    {
+     "valid": false,
+     "seq": 1021669463,
+     "ln": 469989843
+    },
+    {
+     "valid": false,
+     "seq": 71165666,
+     "ln": 553930988
+    }
+   ],
+   "reported": {
+    "state": "Idle",
+    "why": "none",
+    "job": 0,
+    "ln": 0,
+    "boot": "1",
+    "alarm": "0",
+    "tool": "0",
+    "wcs": "G54",
+    "flags": "00",
+    "mpos": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "unreadable": 0,
+   "checks": {
+    "a copy survived": false,
+    "not older than the last finished": true,
+    "card mounts, SD storage": true,
+    "torn log sector at most": true,
+    "boot reports the newest valid copy": true
+   },
+   "timing": {
+    "boot": 0.55,
+    "run": 3.19,
+    "check": 2.13
+   }
+  },
+  {
+   "cycle": 44,
+   "cut_at": 3,
+   "kill_after": null,
+   "died_by_cut": true,
+   "in_flight": {
+    "t": 246.037,
+    "sector": 8257,
+    "busy": 3.365,
+    "tear": "erased",
+    "kind": "header"
+   },
+   "last_finished": {
+    "seq": 21,
+    "ln": 11,
+    "boot": 8,
+    "state": 2
+   },
+   "on_card": [
+    {
+     "valid": false,
+     "seq": 4294967295,
+     "ln": 4294967295
+    },
+    {
+     "valid": false,
+     "seq": 4294967295,
+     "ln": 4294967295
+    }
+   ],
+   "reported": {
+    "state": "Idle",
+    "why": "none",
+    "job": 0,
+    "ln": 0,
+    "boot": "1",
+    "alarm": "0",
+    "tool": "0",
+    "wcs": "G54",
+    "flags": "00",
+    "mpos": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "unreadable": 0,
+   "checks": {
+    "a copy survived": false,
+    "not older than the last finished": true,
+    "card mounts, SD storage": true,
+    "torn log sector at most": true,
+    "boot reports the newest valid copy": true
+   },
+   "timing": {
+    "boot": 0.55,
+    "run": 0.0,
+    "check": 2.12
+   }
+  },
+  {
+   "cycle": 45,
+   "cut_at": 5,
+   "kill_after": null,
+   "died_by_cut": true,
+   "in_flight": {
+    "t": 1291.186,
+    "sector": 8256,
+    "busy": 1.07,
+    "tear": "erased",
+    "kind": "record"
+   },
+   "last_finished": {
+    "seq": 3,
+    "ln": 0,
+    "boot": 2,
+    "state": 1
+   },
+   "on_card": [
+    {
+     "valid": false,
+     "seq": 4294967295,
+     "ln": 4294967295
+    },
+    {
+     "valid": false,
+     "seq": 4294967295,
+     "ln": 4294967295
+    }
+   ],
+   "reported": {
+    "state": "Idle",
+    "why": "none",
+    "job": 0,
+    "ln": 0,
+    "boot": "1",
+    "alarm": "0",
+    "tool": "0",
+    "wcs": "G54",
+    "flags": "00",
+    "mpos": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "unreadable": 0,
+   "checks": {
+    "a copy survived": false,
+    "not older than the last finished": true,
+    "card mounts, SD storage": true,
+    "torn log sector at most": true,
+    "boot reports the newest valid copy": true
+   },
+   "timing": {
+    "boot": 0.55,
+    "run": 0.48,
+    "check": 2.12
+   }
+  },
+  {
+   "cycle": 51,
+   "cut_at": 9,
+   "kill_after": null,
+   "died_by_cut": true,
+   "in_flight": {
+    "t": 4977.096,
+    "sector": 8291,
+    "busy": 2.692,
+    "tear": "garbage",
+    "kind": "record"
+   },
+   "last_finished": {
+    "seq": 34,
+    "ln": 4,
+    "boot": 12,
+    "state": 1
+   },
+   "on_card": [
+    {
+     "valid": false,
+     "seq": 1346282391,
+     "ln": 1400401415
+    },
+    {
+     "valid": false,
+     "seq": 1390083664,
+     "ln": 3103133133
+    }
+   ],
+   "reported": {
+    "state": "Idle",
+    "why": "none",
+    "job": 0,
+    "ln": 0,
+    "boot": "1",
+    "alarm": "0",
+    "tool": "0",
+    "wcs": "G54",
+    "flags": "00",
+    "mpos": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "unreadable": 0,
+   "checks": {
+    "a copy survived": false,
+    "not older than the last finished": true,
+    "card mounts, SD storage": true,
+    "torn log sector at most": true,
+    "boot reports the newest valid copy": true
+   },
+   "timing": {
+    "boot": 0.55,
+    "run": 3.66,
+    "check": 2.12
+   }
+  },
+  {
+   "cycle": 53,
+   "cut_at": 34,
+   "kill_after": null,
+   "died_by_cut": false,
+   "in_flight": {
+    "t": 5170.93,
+    "sector": 8291,
+    "busy": 2.781,
+    "tear": "garbage",
+    "kind": "record"
+   },
+   "last_finished": {
+    "seq": 18,
+    "ln": 7,
+    "boot": 4,
+    "state": 1
+   },
+   "on_card": [
+    {
+     "valid": false,
+     "seq": 3567289313,
+     "ln": 1194393672
+    },
+    {
+     "valid": false,
+     "seq": 3379685273,
+     "ln": 933980839
+    }
+   ],
+   "reported": {
+    "state": "Idle",
+    "why": "none",
+    "job": 0,
+    "ln": 0,
+    "boot": "1",
+    "alarm": "0",
+    "tool": "0",
+    "wcs": "G54",
+    "flags": "00",
+    "mpos": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "unreadable": 0,
+   "checks": {
+    "a copy survived": false,
+    "not older than the last finished": true,
+    "card mounts, SD storage": true,
+    "torn log sector at most": true,
+    "boot reports the newest valid copy": true
+   },
+   "timing": {
+    "boot": 0.56,
+    "run": 4.02,
+    "check": 2.13
+   }
+  }
+ ],
+ "checks": {
+  "every cycle passed": false
+ },
+ "passed": false
+}

@@ -217,8 +217,11 @@ def run_power(args, summary):
         cut_at = rng.randint(1, args.max_cut) if by_write else 0
         kill_after = rng.uniform(0.3, args.stream_seconds) if not by_write else None
         sim.env.update({"SIM_SD_CUT_AT": cut_at, "SIM_SD_SEED": args.seed * 100000 + cycle})
+        timing = {}
+        t_cycle = time.monotonic()
         sim.start()
         started = time.monotonic()
+        timing["boot"] = round(started - t_cycle, 2)
         try:
             link = connect(sim, timeout=4)
             link.command("$H", timeout=5)
@@ -230,6 +233,7 @@ def run_power(args, summary):
                 tally["boot_died_before_link"] += 1
         died_by_cut = sim.proc.poll() is not None
         sim.kill()
+        timing["run"] = round(time.monotonic() - started, 2)
 
         boot = read_trace(trace_path)[-1]
         finished = [c for c in boot["C"] if c["sector"] in copies]
@@ -252,17 +256,19 @@ def run_power(args, summary):
         on_card = [decode_record(read_sector(sim.card, sector)) for sector in copies]
         expected = newest_valid(on_card)
 
-        # The next boot: no cut.
+        # The next boot: no cut. A torn log sector is near the head, in the newest 200 events.
+        t_check = time.monotonic()
         sim.env["SIM_SD_CUT_AT"] = 0
         sim.start()
         link = connect(sim)
         reported = flight(link)
         mounted = plugin_line(link) or ""
-        log_lines = events(link)
+        log_lines = events(link, 200)
         unreadable = [line for line in log_lines if "unreadable" in line]
         time.sleep(1.2)                 # let this boot's own writes finish before the next cut
         link.close()
         sim.kill()
+        timing["check"] = round(time.monotonic() - t_check, 2)
 
         checks = {
             "a copy survived": expected is not None,
@@ -285,7 +291,7 @@ def run_power(args, summary):
                  "in_flight": in_flight and {**in_flight, "kind": kind},
                  "last_finished": last_finished and {k: last_finished[k] for k in ("seq", "ln", "boot", "state")},
                  "on_card": [{k: r[k] for k in ("valid", "seq", "ln")} for r in on_card],
-                 "reported": reported, "unreadable": len(unreadable), "checks": checks}
+                 "reported": reported, "unreadable": len(unreadable), "checks": checks, "timing": timing}
         log.write(json.dumps(entry) + "\n")
         if not all(checks.values()):
             failures.append(entry)

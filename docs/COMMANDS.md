@@ -1,12 +1,14 @@
 # Flight recorder: what a sender needs
 
-The plugin keeps a record of the job in non-volatile memory (the A7's FRAM; a
-file in the simulator). It survives the PC, the link and the controller going
-away. This page is the whole interface.
+The plugin keeps a record of the job in non-volatile memory (the A7's FRAM, or
+the SD card in the uFlexiNET module; a file or an emulated card in the
+simulator). It survives the PC, the link and the controller going away. This
+page is the whole interface.
 
-`$I` reports `[PLUGIN:Flight Recorder v0.3.0]` when it's running, or
-`Flight Recorder (no storage)` when the board has no supported FRAM; then
-these commands are not available.
+`$I` reports `[PLUGIN:Flight Recorder v0.4.0]` when it's running on FRAM,
+`Flight Recorder (SD card)` on the SD card (no FRAM fitted, an SD card build and
+a card in), or `Flight Recorder (no storage)` with neither; then these commands
+are not available. A sender should accept either of the first two.
 
 ## What the sender must do
 
@@ -31,6 +33,7 @@ these commands are not available.
 | `$FLIGHTCLEAR` | `[FLIGHT:...]` then `ok` | Clear the record |
 | `$EVENTS[=<n>]` | `[EVENT:...]` lines, oldest first, then `ok` | The last n events (default 100, up to 1000) |
 | `$EVENTSCLEAR` | `ok` | Clear the event log |
+| `$FLIGHTSD[=R]` | `[FLIGHTSD:...]` then `ok` | SD card storage only: how the card is doing (below). `=R` starts the counts again |
 | `$WATCHDOGTEST` | `[MSG:...]`, then the board resets | `_FR_WD` builds: hang, as a stuck controller would, to test the watchdog. Idle or alarm only (`error:8`); `error:53` with `$793=0` |
 
 `$HELP` lists them. `$FLIGHT` and `$EVENTS` also answer during the alarms
@@ -59,6 +62,11 @@ status report (`?`) meanwhile.
 
 A `Running` record found at boot becomes `Stopped`, `why=reboot`.
 
+While the line changes the record is written at most every `$794` ms: 20 on
+FRAM, 100 on an SD card. A change of state (start, stop, retract, end) is
+written at once. So a power cut loses at most that interval of progress: `ln`
+can be a few lines behind the one cutting, never ahead.
+
 `ln` comes from the steppers; `tool`, `wcs`, `flags` and `mpos` from the
 controller's state when it was written, which can already include a line
 parsed but not yet executing (a `G55` queued behind a `G54` move, say). The
@@ -72,9 +80,15 @@ Only spindle 0 is watched (the one plain `M3`/`M5` address).
 
 ## Event log
 
-The last 1000 events, kept in the FRAM across reboots: what to read when a
-machine misbehaves "for no reason", which on these machines is usually
-electrical noise.
+The last 1000 events, kept in the FRAM or on the SD card across reboots: what
+to read when a machine misbehaves "for no reason", which on these machines is
+usually electrical noise.
+
+On FRAM every event is written as it happens. On an SD card they are kept in
+RAM and written about once a second, as one batch; alarms, a lost link, a
+reset (and every start) and a job stopping for one of those or for a stream
+timeout are written at once. A power cut can lose the last second of the other
+events.
 
 ```
 [EVENT:812|boot=7|t=1523.410|LIMIT|min=X|max=-|n=1]
@@ -100,7 +114,7 @@ between polls, so several trips in a few milliseconds count as one.
 | `LINK` | `usb` / `network`, `connected` / `disconnected` | the sender's USB port opening or closing, a network client arriving or leaving |
 | `MODBUS` | `timeouts`, `crc` (errors), `exceptions`, `retries`, each up to 255 | once a second while the Modbus link (the VFD) has trouble |
 | `JOB` | `start` with `job=`; or the state (`Stopped`, `Retracted`, `Completed`), `why=` and `ln=` | the job record changing |
-| `STORAGE` | `failed_writes=` | FRAM writes that failed, logged once they work again |
+| `STORAGE` | `failed_writes=` | FRAM or SD card writes that failed, logged once they work again |
 | `SPINDLE_OFF` | `after=` job, watchdog, brown-out | at boot after an unexpected reset: a job was running, the watchdog fired, or the supply dipped. grblHAL switches the spindle and coolant off at every start; this records that it mattered. The board sends the stop again 2 s later, for a Modbus VFD that missed the first |
 
 Notes: the reset cause is read from the processor's reset flags as the
@@ -108,7 +122,10 @@ firmware starts, before Expatria's start-up code clears them. If `BOOT` still
 says `unknown` on the A7, the UF2 bootloader clears them first, and a watchdog
 reset logs no `SPINDLE_OFF` (the spindle is still stopped). The simulator
 always says `unknown`. If the log's header is ever unreadable (a power cut
-while it was written), it is rebuilt from the events at the next boot.
+while it was written), it is rebuilt from the events at the next boot. Events
+written after the last header write are found and kept at the next boot too. A
+power cut while an SD card writes a sector of the log can leave the up to 32
+events in it unreadable (`[EVENT:?|unreadable slot n]`).
 
 ## Stream-loss retract
 
@@ -173,6 +190,31 @@ the spindle stopped after `$793` seconds.
 | `$791` | 3.0 s | Stream loss timeout |
 | `$792` | 20.0 mm | Retract to this far below machine zero |
 | `$793` | 5 s | Watchdog timeout, 3–10 s; 0 turns it off (1 and 2 act as 3). `_FR_WD` builds only; takes effect at the next boot |
+| `$794` | 0 | Record write interval while the line changes, ms. 0 is the storage's own: 20 on FRAM, 100 on an SD card; otherwise 10–1000 (1–9 act as 10). Takes effect at once |
+
+Coming from v0.3.0, `$790`–`$793` keep their values and `$794` starts at 0.
+
+## SD card (`$FLIGHTSD`)
+
+```
+[FLIGHTSD:writes=5120|failed=0|busy_avg=2.1|busy_max=212|pauses=3|blocked_max_us=905|gap_max=2|apart=8192|ok]
+```
+
+| Field | Meaning |
+|---|---|
+| `writes` | Sectors written since boot (or since `=R`) |
+| `failed` | Writes the card refused |
+| `busy_avg`, `busy_max` | ms the card took to finish a write: average, longest |
+| `pauses` | Writes that took 100 ms or more |
+| `blocked_max_us` | Longest the recorder kept the processor in one go, µs: sending a sector, or a read |
+| `gap_max` | Longest gap between grblHAL's realtime polls, ms (any cause, not only the card) |
+| `apart` | Sectors between the closest two of `FLIGHT.DAT`'s three parts (record copy 0, the log, record copy 1) on the card: 8192 (4 MB) or more |
+| `ok` / `failing` | `failing` once a write has failed or the card has been busy for over a second, until a write works again |
+
+The recorder makes `FLIGHT.DAT` (8 MB + 512 bytes, hidden, read only, system)
+once, at its full size, and from then on writes its sectors directly, never
+through the file system. Don't delete it, and don't swap the card with the
+board on. The card's other files are left alone.
 
 ## Resume
 

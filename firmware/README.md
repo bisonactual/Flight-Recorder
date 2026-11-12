@@ -14,6 +14,10 @@ recorder needs. Same board options, same UF2 bootloader, same way of flashing.
 (`FR_WATCHDOG_ENABLE=1`, setting `$793`): a hung controller resets after
 3–10 s and so stops the spindle (`docs/COMMANDS.md`, "Watchdog").
 
+The `eth_sd` builds can also record on the uFlexiNET's SD card, when no FRAM
+is fitted (`plugin/storage_sd.c`, top README). The USB-only `printnc` builds
+have no SD card support, so only the FRAM.
+
 Other Flexi-HAL builds work the same way (all 17 built on 31 Oct 2026); add
 a pair of sections for each to `flexihal-a7/platformio.local.ini` when needed.
 
@@ -25,7 +29,9 @@ branch `F446_Flexi_HAL`, pinned in `flexihal-a7/driver.lock`.
 Each variant adds to Expatria's build:
 
 - the recorder plugin (`plugin/`) and `FLIGHT_RECORDER_ENABLE=1`;
-- `EEPROM_IS_FRAM=1`: the FM24V10 FRAM fitted at U27 (see the top README);
+- `EEPROM_IS_FRAM=1`: the FM24V10 FRAM fitted at U27 (see the top README).
+  With the stock EEPROM still there the recorder leaves it alone and uses the
+  SD card instead (`eth_sd` builds);
 - `MPG_ENABLE=0`: MPG stays off with the FRAM, whatever the parent build says;
 - `core/executing-line.patch`, `core/plugin-init.patch` and
   `core/modbus-stats.patch` on the grblHAL core (the last only lets the
@@ -64,15 +70,18 @@ Exactly as Expatria's own releases (their
    complain the disk was removed without ejecting: that's normal.)
 
 Back up the settings first (`$$`) as with any firmware change. The recorder's
-own settings are `$790`–`$793` (see `docs/COMMANDS.md`); it starts after every
+own settings are `$790`–`$794` (see `docs/COMMANDS.md`); it starts after every
 other plugin, so their saved settings stay where they were. Coming from
 v0.2.0, its own settings go back to their defaults once (v0.3.0 added `$793`).
+Coming from v0.3.0 they stay, and `$794` starts at 0 (checked in the simulator).
 
-After flashing, `$I` should list `[PLUGIN:Flight Recorder v0.3.0]`, and
+After flashing, `$I` should list `[PLUGIN:Flight Recorder v0.4.0]` (with the
+FRAM) or `[PLUGIN:Flight Recorder (SD card) v0.4.0]` (no FRAM, a card in), and
 `$EVENTS` should show a `BOOT` entry with a real cause: `reset=power-on` after
 plugging in, `reset-pin` after pressing **RST**. `unknown` there means the
 bootloader clears the reset flags: tell us. If `$I` says `Flight Recorder (no
-storage)`, the chip at U27 isn't the FM24V10 FRAM and the recorder is off.
+storage)`, the chip at U27 isn't the FM24V10 FRAM and there is no SD card (or
+the build has no SD card support), and the recorder only does the retract.
 
 ### First checks with a watchdog build
 
@@ -103,3 +112,9 @@ On the bench, spindle unloaded, Z high:
   counts the whole 512 KB chip). The USB-only `printnc_fr` uses 275,784
   (60 %). (Not compared byte for byte with their published UF2, which was
   built with the unpublished commit.)
+- v0.4.0 (SD card storage), built 12 Nov 2026: `_fr` 363,568 bytes of flash and
+  77,348 of RAM (79.3 % of the 448 KB), 3.5 KB and 2.4 KB more than v0.3.0
+  built the same way (360,072 and 74,932); the RAM is three event sectors and a
+  send buffer. `_fr_wd` 363,968 / 77,352; `eth_sd_4x_fr` 365,512 / 76,908,
+  `_wd` 365,912 / 76,912; USB-only `printnc_fr` 276,476 / 30,924, `_wd`
+  276,924 / 30,932.

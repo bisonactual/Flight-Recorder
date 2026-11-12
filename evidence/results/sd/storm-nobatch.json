@@ -1,0 +1,95 @@
+{
+ "scenario": "storm",
+ "args": {
+  "scenario": "storm",
+  "sim": "/home/owl/fr-sd/builds/sd-nobatch/grblHAL_flexihal_sim",
+  "run": "/home/owl/fr-sd/runs/storm-nobatch",
+  "seed": 1,
+  "port": 8190,
+  "cycles": 200,
+  "tear_unit": 1,
+  "max_cut": 40,
+  "random_share": 0.25,
+  "stream_seconds": 4.0,
+  "speed": 2.0,
+  "seconds": 20.0,
+  "lines": 4000,
+  "pause": "0.1,200,250",
+  "events": 1000
+ },
+ "plugin": "[PLUGIN:Flight Recorder (SD card) v0.4.0]",
+ "burst": {
+  "lines": 1000,
+  "seconds": 10.2,
+  "replies": 25,
+  "card_writes": 1078,
+  "events_logged": 0,
+  "kinds": [],
+  "storage_events": []
+ },
+ "stats_after_burst": null,
+ "alarm_reply": [
+  "[MSG:]",
+  "ALARM:9"
+ ],
+ "error_reply": [
+  "error:9"
+ ],
+ "after_alarm_cut": [
+  "[EVENT:861|boot=1|t=9.100|INPUT|feed_hold|n=1]",
+  "[EVENT:862|boot=1|t=9.120|INPUT|feed_hold,cycle_start|n=1]",
+  "[EVENT:863|boot=1|t=9.130|INPUT|cycle_start|n=1]",
+  "[EVENT:864|boot=1|t=9.130|INPUT|feed_hold|n=1]",
+  "[EVENT:865|boot=1|t=9.143|INPUT|feed_hold,cycle_start|n=1]",
+  "[EVENT:866|boot=1|t=9.150|INPUT|cycle_start|n=1]",
+  "[EVENT:867|boot=1|t=9.160|INPUT|feed_hold|n=1]",
+  "[EVENT:868|boot=1|t=9.167|INPUT|cycle_start|n=1]",
+  "[EVENT:869|boot=1|t=9.171|INPUT|feed_hold|n=1]",
+  "[EVENT:870|boot=1|t=9.184|INPUT|cycle_start|n=1]",
+  "[EVENT:871|boot=1|t=9.190|INPUT|feed_hold|n=1]",
+  "[EVENT:872|boot=1|t=9.199|INPUT|cycle_start|n=1]",
+  "[EVENT:873|boot=1|t=9.200|INPUT|feed_hold|n=1]",
+  "[EVENT:874|boot=1|t=9.211|INPUT|cycle_start|n=1]",
+  "[EVENT:875|boot=1|t=9.220|INPUT|feed_hold|n=1]",
+  "[EVENT:876|boot=1|t=19.991|INPUT|cycle_start|n=1]",
+  "[EVENT:877|boot=1|t=19.992|ALARM|alarm=9|ln=0|n=1]",
+  "[EVENT:878|boot=2|t=0.360|BOOT|reset=unknown|flags=00|job=Idle|n=1]",
+  "[EVENT:879|boot=2|t=0.360|LINK|usb|disconnected|n=1]",
+  "[EVENT:880|boot=2|t=0.400|LINK|network|connected|n=1]"
+ ],
+ "after_error_cut": [
+  "[EVENT:865|boot=1|t=9.143|INPUT|feed_hold,cycle_start|n=1]",
+  "[EVENT:866|boot=1|t=9.150|INPUT|cycle_start|n=1]",
+  "[EVENT:867|boot=1|t=9.160|INPUT|feed_hold|n=1]",
+  "[EVENT:868|boot=1|t=9.167|INPUT|cycle_start|n=1]",
+  "[EVENT:869|boot=1|t=9.171|INPUT|feed_hold|n=1]",
+  "[EVENT:870|boot=1|t=9.184|INPUT|cycle_start|n=1]",
+  "[EVENT:871|boot=1|t=9.190|INPUT|feed_hold|n=1]",
+  "[EVENT:872|boot=1|t=9.199|INPUT|cycle_start|n=1]",
+  "[EVENT:873|boot=1|t=9.200|INPUT|feed_hold|n=1]",
+  "[EVENT:874|boot=1|t=9.211|INPUT|cycle_start|n=1]",
+  "[EVENT:875|boot=1|t=9.220|INPUT|feed_hold|n=1]",
+  "[EVENT:876|boot=1|t=19.991|INPUT|cycle_start|n=1]",
+  "[EVENT:877|boot=1|t=19.992|ALARM|alarm=9|ln=0|n=1]",
+  "[EVENT:878|boot=2|t=0.360|BOOT|reset=unknown|flags=00|job=Idle|n=1]",
+  "[EVENT:879|boot=2|t=0.360|LINK|usb|disconnected|n=1]",
+  "[EVENT:880|boot=2|t=0.400|LINK|network|connected|n=1]",
+  "[EVENT:881|boot=2|t=1.750|ERROR|error=46|ln=0|n=1]",
+  "[EVENT:882|boot=2|t=1.760|ERROR|error=9|ln=0|n=1]",
+  "[EVENT:883|boot=3|t=0.414|BOOT|reset=unknown|flags=00|job=Idle|n=1]",
+  "[EVENT:884|boot=3|t=0.415|LINK|network|connected|n=1]"
+ ],
+ "log": {
+  "events": 883,
+  "unreadable": 0,
+  "in_order": true
+ },
+ "alarm_kept": true,
+ "error_kept_without_batching_only": true,
+ "checks": {
+  "alarm on the card despite the cut": true,
+  "log readable, in order": true,
+  "no events dropped in the burst": true
+ },
+ "passed": true
+}
