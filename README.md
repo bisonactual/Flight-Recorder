@@ -60,7 +60,7 @@ On a board with the stock EEPROM at U27, use the `_FR_SD` builds and not the pla
 - Don't swap the card with the board on, as the recorder keeps writing where `FLIGHT.DAT` was on the old card. If you do change it, reboot.
 - `$FLIGHTSD` shows how the card is doing. `apart=` should be 8192 or more: the two record copies and the log sit 4 MB apart on the card, so a card that damages more than it was writing can't take them all.
 
-So far it has only been tested in the simulator (`evidence/SD.md`). Hardware tests are next.
+So far it has only been tested in the simulator. Hardware tests are next.
 
 
 In detail:

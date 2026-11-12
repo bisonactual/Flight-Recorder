@@ -1,5 +1,5 @@
 #!/bin/bash
-# Builds the simulator variants the SD card evidence uses (evidence/SD.md).
+# Builds the simulator variants the SD card evidence uses.
 #
 # Usage: tools/build_sim.sh <GRBLHAL-Sim checkout, branch sd-card> <output dir> [variant ...]
 #   sd          the normal build: FRAM stand-in (FLIGHT.DAT) unless -F, the SD card with -d

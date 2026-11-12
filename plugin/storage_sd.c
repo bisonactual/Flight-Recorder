@@ -42,7 +42,7 @@
   That puts them in different allocation units on most cards. A card that
   damages more than the sector it was writing, up to a whole unit, can then only
   hurt the copy it was writing and not the one it finished last, and a torn log
-  write hurts neither. evidence/SD.md has the runs.
+  write hurts neither.
 
   The ring is a sector longer than the 1000 events kept. A sector the log moves
   into is started blank rather than read first, which drops the oldest events in
