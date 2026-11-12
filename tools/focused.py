@@ -27,6 +27,8 @@ numbered lines (G54, a move to X10 Y10 Z-1, spindle on), then:
   clear-midjob    $FLIGHTCLEAR during a move gets error:8 and the record stays
                   Running. Then the client closes and the job is still
                   retracted.
+  events-midjob   $EVENTS during a move gets error:8 and no events. Once the
+                  machine is idle (the job still running) it lists them.
   boot-watchdog   the board comes up after a watchdog reset (SIM_RESET_CAUSE).
                   The event log has SPINDLE_OFF|after=watchdog, on the SD card
                   too, where the storage starts a little after boot.
@@ -49,7 +51,7 @@ from stream import parse_flight
 
 SCENARIOS = ["dwell-descend", "numbered-jog", "partial-line", "resume-power", "reconnect", "reset-control",
              "estop-retract", "reset-retract", "g20", "g91", "check", "m0", "hold-retract",
-             "clear-midjob", "boot-watchdog"]
+             "clear-midjob", "events-midjob", "boot-watchdog"]
 
 WORK_X50 = -250.0       # machine X of work X50, where N4 goes in the reconnect scenario
 
@@ -268,6 +270,17 @@ def main():
             wait_until(link, in_alarm)
             record, _ = read_record("after")
             checks["retracted"] = bool(record) and record["state"] == "Retracted"
+
+        elif scenario == "events-midjob":
+            send("N4G1X50F400")
+            during = send("$EVENTS=5")
+            checks["refused mid-move"] = "error:8" in during and not any(line.startswith("[EVENT:") for line in during)
+            send("M5")                  # waits for the move, and with the spindle off there's no retract
+            state, _ = wait_until(link, lambda state, position: state == "Idle")
+            idle = send("$EVENTS=5", timeout=10)
+            record, _ = read_record("after")
+            checks["answered when idle"] = state == "Idle" and "ok" in idle and                 any(line.startswith("[EVENT:") for line in idle)
+            checks["job still running"] = bool(record) and record["state"] == "Running"
 
         elif scenario == "boot-watchdog":
             replies = send("$EVENTS=20")

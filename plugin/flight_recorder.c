@@ -728,6 +728,11 @@ static status_code_t cmd_flight_clear (sys_state_t state, char *args)
 
 static status_code_t cmd_events (sys_state_t state, char *args)
 {
+    // Not while the machine moves: reading the log can take a while, on an SD card up to
+    // 33 sector reads, each waiting first for a busy card.
+    if(!(state == STATE_IDLE || (state & (STATE_ALARM|STATE_ESTOP|STATE_CHECK_MODE|STATE_SLEEP))))
+        return Status_IdleError;
+
     uint32_t count = args ? strtoul(args, NULL, 10) : 100;
 
     fr_log_report(count ? count : 100);
