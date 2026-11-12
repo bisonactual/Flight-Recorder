@@ -33,6 +33,7 @@
 
 #include "flight_recorder.h"
 #include "event_log.h"
+#include "board.h"
 
 #if FR_SD_ENABLE
 #include "spi.h"

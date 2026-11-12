@@ -102,14 +102,15 @@ typedef struct {
     bool batch_events;          // events wait in RAM and go out about once a second
 } fr_storage_info_t;
 
-// Picks the storage, FRAM if it is fitted, otherwise an SD card. FRAM is checked at
-// start-up (late false), the SD card once grblHAL has mounted it (late true).
-bool fr_storage_init (bool late);
+// Starts the FRAM if it is fitted (in the simulator, its file stand-in), at start-up.
+bool fr_storage_init (void);
+// Starts the SD card, once grblHAL has mounted it. SD card builds, when there is no FRAM.
+bool fr_storage_init_sd (void);
 const fr_storage_info_t *fr_storage_info (void);
 bool fr_storage_read (uint32_t addr, void *data, uint32_t size);
 // Doesn't wait for the storage. An SD card does the write later, in the background.
 bool fr_storage_write (uint32_t addr, const void *data, uint32_t size);
-// Sends whatever an SD card has waiting in RAM. FRAM writes have already gone.
+// Sends what an SD card holds in RAM. Nothing to do on FRAM, which writes straight through.
 void fr_storage_flush (void);
 // Background work, from the realtime poll.
 void fr_storage_poll (void);

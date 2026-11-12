@@ -93,6 +93,8 @@ typedef struct {
     uint8_t check;
 } log_header_t;
 
+_Static_assert(sizeof(log_header_t) == FR_LOG_HEADER_SIZE, "FR_LOG_HEADER_SIZE must be the size of log_header_t");
+
 static bool log_ready = false;
 static log_header_t header;
 static uint16_t boot;

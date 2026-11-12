@@ -25,6 +25,7 @@
 #define _FR_STORAGE_H_
 
 #include "flight_recorder.h"
+#include "event_log.h"
 
 typedef struct {
     fr_storage_info_t info;
@@ -40,7 +41,17 @@ extern const fr_backend_t fr_storage_fram;     // storage_fram.c, the board
 extern const fr_backend_t fr_storage_file;     // storage_file.c, the simulator's stand-in for the FRAM
 extern const fr_backend_t fr_storage_sd;       // storage_sd.c
 
-// From the board file: is the SD card still programming? Must not wait.
-bool fr_sd_card_busy (void);
+// The FRAM's layout, which the simulator's file shares: the record copies 64 bytes apart
+// from 0, the log header at FR_LOG_BASE with the events right after it, and every write
+// straight through.
+#define FR_FRAM_INFO { \
+    .label = NULL, \
+    .record_stride = 64, \
+    .log_header = FR_LOG_BASE, \
+    .log_entries = FR_LOG_BASE + FR_LOG_HEADER_SIZE, \
+    .log_slots = FR_LOG_EVENTS, \
+    .record_interval = 20, \
+    .batch_events = false \
+}
 
 #endif

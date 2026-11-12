@@ -88,6 +88,7 @@
 
 #include "storage.h"
 #include "event_log.h"
+#include "board.h"
 
 #define SD_SECTOR       512u
 #define SD_PATH         "/FLIGHT.DAT"
@@ -147,13 +148,13 @@ static struct {
     bool pending;
     uint8_t finished;               // copy that holds the newest record the card has finished
     uint8_t size;
-    uint8_t data[64];
+    uint8_t data[sizeof(fr_record_t)];
 } record;
 
 static struct {
     bool dirty;
     uint8_t size;
-    uint8_t data[16];
+    uint8_t data[FR_LOG_HEADER_SIZE];
 } header;
 
 static cache_t cache[SD_CACHE];

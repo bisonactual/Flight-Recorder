@@ -77,6 +77,7 @@
 
 #include "flight_recorder.h"
 #include "event_log.h"
+#include "board.h"
 
 #define SETTING_AUTO_RETRACT    790
 #define SETTING_TIMEOUT         791
@@ -92,8 +93,8 @@
 #define FR_RETRACT_LIMIT        120000u     // ms we give a retract before stopping the machine
 #endif
 
-// record_interval uses what was padding before v0.4.0, so older saved settings still load,
-// with it at 0.
+// record_interval fills what would be padding after watchdog, so settings saved without
+// it (v0.3.0) are the same size and still load, with it at 0.
 typedef struct {
     bool auto_retract;
     float timeout;          // s
@@ -883,7 +884,7 @@ static void storage_ready (void)
 // An SD card is only mounted once the drivers are up, after the plugins have started.
 static void storage_start_late (void *data)
 {
-    if(fr_storage_init(true))
+    if(fr_storage_init_sd())
         storage_ready();
     storage_checked = true;
 }
@@ -924,8 +925,8 @@ void flight_recorder_init (void)
     if((boot_reset_cause & FR_Reset_BrownOut) && !(boot_reset_cause & FR_Reset_PowerOn))
         spindle_stop_reason |= FR_BootStop_BrownOut;
 
-    // FRAM, if it is fitted, as before. Otherwise an SD card, once grblHAL has it mounted.
-    if(fr_storage_init(false))
+    // FRAM, if it is fitted. Otherwise an SD card, once grblHAL has it mounted.
+    if(fr_storage_init())
         storage_ready();
 #if FR_SD_ENABLE
     else

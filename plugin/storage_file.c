@@ -26,8 +26,9 @@
   the same layout. Every write is flushed straight away, so it survives the
   simulator being killed, which is how the evidence runs cut the power.
 
-  With -F the simulator has no FRAM fitted, and the recorder uses the SD card
-  (-d) instead.
+  In a simulator with its SD card model (FR_SD_ENABLE), -F means no FRAM is
+  fitted, and the recorder uses the SD card (-d) instead. Without the card
+  model the FRAM is always there.
 */
 
 #include "driver.h"
@@ -40,16 +41,20 @@
 #include "storage.h"
 #include "event_log.h"
 
+#if FR_SD_ENABLE
+#include "sim_sdcard.h"
+#endif
+
 #define STORAGE_FILE "FLIGHT.DAT"
 
 static FILE *file = NULL;
 
 static bool file_init (void)
 {
-    extern bool sim_fram_fitted (void);
-
+#if FR_SD_ENABLE
     if(!sim_fram_fitted())
         return false;
+#endif
 
     if(!(file = fopen(STORAGE_FILE, "r+b")))
         file = fopen(STORAGE_FILE, "w+b");
@@ -83,15 +88,7 @@ static bool file_write (uint32_t addr, const void *data, uint32_t size)
 }
 
 const fr_backend_t fr_storage_file = {
-    .info = {
-        .label = NULL,
-        .record_stride = 64,
-        .log_header = FR_LOG_BASE,
-        .log_entries = FR_LOG_BASE + 16,
-        .log_slots = FR_LOG_EVENTS,
-        .record_interval = 20,
-        .batch_events = false
-    },
+    .info = FR_FRAM_INFO,
     .init = file_init,
     .read = file_read,
     .write = file_write

@@ -27,8 +27,9 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define FR_LOG_EVENTS   1000
-#define FR_LOG_BASE     0x400       // storage offset, after the record slots and the probe byte
+#define FR_LOG_EVENTS       1000
+#define FR_LOG_BASE         0x400   // FRAM offset of the log header, after the record slots and the probe byte
+#define FR_LOG_HEADER_SIZE  16      // bytes, the log header (log_header_t in event_log.c)
 
 typedef enum {
     FR_Event_Boot = 1,      // code: reset cause (fr_reset_t), data: job state found at boot
@@ -83,12 +84,5 @@ void fr_log_poll (uint32_t now);
 void fr_log_storage_result (bool ok);
 void fr_log_report (uint32_t count);
 void fr_log_clear (void);
-
-// From the board's storage file: why the processor last reset (fr_reset_t bits), 0 if not known.
-uint8_t fr_reset_cause (void);
-
-// From the board's storage file: the hardware watchdog. Once started only a reset stops it.
-void fr_watchdog_start (uint32_t seconds);
-void fr_watchdog_feed (void);
 
 #endif

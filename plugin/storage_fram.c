@@ -125,18 +125,8 @@ static bool fram_write (uint32_t addr, const void *data, uint32_t size)
     return ok;
 }
 
-// The same layout as before v0.4.0: record copies 64 bytes apart, the log from 0x400,
-// and every write goes straight through.
 const fr_backend_t fr_storage_fram = {
-    .info = {
-        .label = NULL,
-        .record_stride = 64,
-        .log_header = FR_LOG_BASE,
-        .log_entries = FR_LOG_BASE + 16,
-        .log_slots = FR_LOG_EVENTS,
-        .record_interval = 20,
-        .batch_events = false
-    },
+    .info = FR_FRAM_INFO,
     .init = fram_init,
     .read = fram_read,
     .write = fram_write

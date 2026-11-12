@@ -22,9 +22,9 @@
 */
 
 /*
-  FRAM if it is fitted, as before. Otherwise the SD card, if the build has SD
-  card support and a card is in. Otherwise no storage, and the recorder only
-  does the stream loss retract.
+  FRAM if it is fitted (in the simulator, its file stand-in). Otherwise the SD
+  card, if the build has SD card support and a card is in. Otherwise no storage,
+  and the recorder only does the stream loss retract.
 */
 
 #include "driver.h"
@@ -37,24 +37,31 @@
 
 static const fr_backend_t *backend = NULL;
 
-bool fr_storage_init (bool late)
+static bool start (const fr_backend_t *storage)
 {
-#ifdef GRBL_SIM
-    const fr_backend_t *candidate = late ? NULL : &fr_storage_file;
-#else
-    const fr_backend_t *candidate = late ? NULL : &fr_storage_fram;
-#endif
-
-#if FR_SD_ENABLE
-    if(late)
-        candidate = &fr_storage_sd;
-#endif
-
-    if(backend == NULL && candidate && candidate->init())
-        backend = candidate;
+    if(backend == NULL && storage->init())
+        backend = storage;
 
     return backend != NULL;
 }
+
+bool fr_storage_init (void)
+{
+#ifdef GRBL_SIM
+    return start(&fr_storage_file);
+#else
+    return start(&fr_storage_fram);
+#endif
+}
+
+#if FR_SD_ENABLE
+
+bool fr_storage_init_sd (void)
+{
+    return start(&fr_storage_sd);
+}
+
+#endif
 
 const fr_storage_info_t *fr_storage_info (void)
 {

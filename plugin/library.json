@@ -1,6 +1,6 @@
 {
   "name": "flight_recorder",
-  "version": "0.1.0",
+  "version": "0.4.0",
   "description": "Flight recorder plugin for grblHAL: job record in FRAM or on the SD card, stream-loss retract",
   "license": "GPL-3.0-or-later",
   "build": {
