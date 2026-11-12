@@ -27,6 +27,9 @@ numbered lines (G54, a move to X10 Y10 Z-1, spindle on), then:
   clear-midjob    $FLIGHTCLEAR during a move gets error:8 and the record stays
                   Running. Then the client closes and the job is still
                   retracted.
+  boot-watchdog   the board comes up after a watchdog reset (SIM_RESET_CAUSE).
+                  The event log has SPINDLE_OFF|after=watchdog, on the SD card
+                  too, where the storage starts a little after boot.
 
 Usage: focused.py <scenario> --sim <binary> --run <dir> [--sd]. Prints the checks
 as JSON and exits with 1 if any of them failed. --sd runs it on the simulator's SD
@@ -46,7 +49,7 @@ from stream import parse_flight
 
 SCENARIOS = ["dwell-descend", "numbered-jog", "partial-line", "resume-power", "reconnect", "reset-control",
              "estop-retract", "reset-retract", "g20", "g91", "check", "m0", "hold-retract",
-             "clear-midjob"]
+             "clear-midjob", "boot-watchdog"]
 
 WORK_X50 = -250.0       # machine X of work X50, where N4 goes in the reconnect scenario
 
@@ -98,7 +101,8 @@ def main():
     job = f"{0xAA00 + SCENARIOS.index(scenario):08X}"
     result = {"scenario": scenario, "commands": []}
     checks = {}
-    sim = Sim(args.sim, args.run, speed=args.speed, sd=args.sd).start()
+    env = {"SIM_RESET_CAUSE": 16} if scenario == "boot-watchdog" else None     # FR_Reset_Watchdog
+    sim = Sim(args.sim, args.run, speed=args.speed, sd=args.sd, env=env).start()
     link = None
 
     def send(text, timeout=10):
@@ -264,6 +268,10 @@ def main():
             wait_until(link, in_alarm)
             record, _ = read_record("after")
             checks["retracted"] = bool(record) and record["state"] == "Retracted"
+
+        elif scenario == "boot-watchdog":
+            replies = send("$EVENTS=20")
+            checks["spindle stop logged"] = any("SPINDLE_OFF|after=watchdog" in line for line in replies)
     finally:
         if link:
             try:

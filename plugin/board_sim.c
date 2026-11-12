@@ -25,6 +25,8 @@
 
 #if FLIGHT_RECORDER_ENABLE
 
+#include <stdlib.h>
+
 #include "flight_recorder.h"
 #include "event_log.h"
 
@@ -32,10 +34,13 @@
 #include "sim_sdcard.h"
 #endif
 
-// The simulated processor has no reset flags and no watchdog.
+// The simulated processor has no reset flags and no watchdog. For tests, the
+// environment variable SIM_RESET_CAUSE (fr_reset_t bits) stands in for the flags.
 uint8_t fr_reset_cause (void)
 {
-    return 0;
+    const char *cause = getenv("SIM_RESET_CAUSE");
+
+    return cause ? (uint8_t)atoi(cause) : 0;
 }
 
 void fr_watchdog_start (uint32_t seconds)

@@ -419,6 +419,7 @@ static void retract_poll (sys_state_t state, uint32_t now)
 
 static uint8_t spindle_stop_reason = 0;     // fr_boot_stop_t bits
 static uint32_t spindle_stop_again = 0;     // when to send the stop again, 0 until logged
+static bool storage_checked = false;        // the storage has started, or there is none
 
 #if FR_WATCHDOG_ENABLE
 static enum { Watchdog_NotChecked = 0, Watchdog_Off, Watchdog_On } watchdog = Watchdog_NotChecked;
@@ -463,9 +464,11 @@ static void watchdog_poll (void)
 
 // The core has already stopped the spindle and coolant at boot. Log why it mattered,
 // then send the stop again two seconds later in case a Modbus VFD wasn't listening yet.
+// The SD card starts a little after boot, so wait for the storage, or the event would
+// go to a log that isn't there yet.
 static void spindle_stop_poll (uint32_t now)
 {
-    if(!spindle_stop_reason)
+    if(!spindle_stop_reason || !storage_checked)
         return;
 
     if(!spindle_stop_again) {
@@ -877,6 +880,7 @@ static void storage_start_late (void *data)
 {
     if(fr_storage_init(true))
         storage_ready();
+    storage_checked = true;
 }
 
 #endif
@@ -922,6 +926,7 @@ void flight_recorder_init (void)
     else
         task_run_on_startup(storage_start_late, NULL);
 #endif
+    storage_checked = have_storage || !FR_SD_ENABLE;
 
     on_execute_realtime = grbl.on_execute_realtime;
     grbl.on_execute_realtime = onExecuteRealtime;
