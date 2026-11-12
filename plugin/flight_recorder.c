@@ -737,6 +737,11 @@ static status_code_t cmd_flight_clear (sys_state_t state, char *args)
 
 static status_code_t cmd_events (sys_state_t state, char *args)
 {
+    // Not while the machine moves: reading up to 1000 events from the FRAM and writing
+    // them out keeps the foreground busy for a while.
+    if(!(state == STATE_IDLE || (state & (STATE_ALARM|STATE_ESTOP|STATE_CHECK_MODE|STATE_SLEEP))))
+        return Status_IdleError;
+
     bool was_busy = busy;
     uint32_t count = args ? strtoul(args, NULL, 10) : 100;
 
