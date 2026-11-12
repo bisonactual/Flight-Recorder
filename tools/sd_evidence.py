@@ -24,7 +24,9 @@ Usage:
   sd_evidence.py power --sim <binary> --run <dir> [--cycles 200] [--tear-unit 1]
   sd_evidence.py pause --sim <binary> --run <dir> [--seconds 20] [--pause 0.1,200,250]
   sd_evidence.py storm --sim <binary> --run <dir> [--events 1000]
-Each writes <run>/summary.json and prints the checks. Exit status 1 if one failed.
+Each writes <run>/summary.json and prints the checks with a short summary. Exit
+status 1 if one failed. The run folder is emptied first, so it has to be new,
+empty, or an earlier run's (with summary.json or card.img in it).
 """
 
 import argparse
@@ -41,13 +43,17 @@ import zlib
 from evidence import setup_machine, skip_greeting
 from link import open_link
 from simrun import Sim
-from stream import parse_flight
+from stream import query_flight
 
 FR_MAGIC = 0x31524646
 RECORD = struct.Struct("<5I5fi5B3sI")       # fr_record_t, 56 bytes
 MAGIC_HEX = struct.pack("<I", FR_MAGIC).hex()
 LOG_MAGIC_HEX = struct.pack("<I", 0x31474C46).hex()     # the event log header
-WS_PORT = 8190
+LOG_SECTORS = 33                            # the event ring's sectors, right after the header
+
+# As the plugin names them in [FLIGHT:...], by number.
+STATES = ["Idle", "Running", "Stopped", "Retracted", "Completed"]
+REASONS = ["none", "timeout", "usb", "network", "alarm", "reset", "reboot"]
 
 
 # The card model's trace and image
@@ -55,23 +61,24 @@ WS_PORT = 8190
 def read_trace(path):
     """One dict per simulator start: its writes (W), finished writes (C), cut (X) and blocked times (B)."""
     boots = []
-    for line in open(path):
-        parts = line.split()
-        if not parts:
-            continue
-        if line.startswith("# start"):
-            boots.append({"start": line.strip(), "W": [], "C": [], "X": None, "B": []})
-        elif not boots:
-            continue
-        elif parts[0] == "W":
-            boots[-1]["W"].append({"t": float(parts[1]), "sector": int(parts[2]), "busy": float(parts[3]), "tear": parts[4]})
-        elif parts[0] == "C":
-            boots[-1]["C"].append({"t": float(parts[1]), "sector": int(parts[2]), "data": bytes.fromhex(parts[3])})
-        elif parts[0] == "X":
-            boots[-1]["X"] = {"t": float(parts[1]), "sector": int(parts[2])}
-        elif parts[0] == "B":
-            boots[-1]["B"].append({"t": float(parts[1]), "us": int(parts[2]), "what": parts[3],
-                                   "waited": int(parts[4]) if len(parts) > 4 else 0})
+    with open(path) as f:
+        for line in f:
+            parts = line.split()
+            if not parts:
+                continue
+            if line.startswith("# start"):
+                boots.append({"start": line.strip(), "W": [], "C": [], "X": None, "B": []})
+            elif not boots:
+                continue
+            elif parts[0] == "W":
+                boots[-1]["W"].append({"t": float(parts[1]), "sector": int(parts[2]), "busy": float(parts[3]), "tear": parts[4]})
+            elif parts[0] == "C":
+                boots[-1]["C"].append({"t": float(parts[1]), "sector": int(parts[2]), "data": bytes.fromhex(parts[3])})
+            elif parts[0] == "X":
+                boots[-1]["X"] = {"t": float(parts[1]), "sector": int(parts[2])}
+            elif parts[0] == "B":
+                boots[-1]["B"].append({"t": float(parts[1]), "us": int(parts[2]), "what": parts[3],
+                                       "waited": int(parts[4]) if len(parts) > 4 else 0})
     return boots
 
 
@@ -101,7 +108,11 @@ def read_sector(image, sector):
 # The simulator
 
 def connect(sim, timeout=5.0):
-    """Connects over WebSocket once the simulator listens, and waits for the recorder's storage to be up."""
+    """Connects over WebSocket once the simulator listens, and waits for the recorder's storage to be up.
+
+    Raises ConnectionError if the simulator exits first, and RuntimeError if it runs but
+    the recorder doesn't answer $FLIGHT in time.
+    """
     deadline = time.monotonic() + timeout
     while True:
         try:
@@ -116,12 +127,10 @@ def connect(sim, timeout=5.0):
         if any(line.startswith("[FLIGHT:") for line in link.command("$FLIGHT", timeout=1)):
             return link
         time.sleep(0.1)
-    return link
-
-
-def flight(link):
-    replies = link.command("$FLIGHT", timeout=3)
-    return next((parse_flight(line) for line in replies if line.startswith("[FLIGHT:")), None)
+    link.close()
+    if sim.proc.poll() is not None:
+        raise ConnectionError("the simulator exited before the recorder answered")
+    raise RuntimeError(f"no [FLIGHT:] reply within {timeout} s")
 
 
 def sd_stats(link, reset=False):
@@ -181,7 +190,7 @@ def stream(link, lines, until, keep_going=lambda: True, rx_size=900):
 
 def run_power(args, summary):
     rng = random.Random(args.seed)
-    sim = Sim(args.sim, args.run, ws_port=WS_PORT, speed=args.speed, sd=True,
+    sim = Sim(args.sim, args.run, ws_port=args.port, speed=args.speed, sd=True,
               env={"SIM_SD_SEED": args.seed, "SIM_SD_TEAR_UNIT": args.tear_unit})
     trace_path = sim.card + ".trace"
 
@@ -200,113 +209,130 @@ def run_power(args, summary):
     headers = sorted({c["sector"] for boot in setup_trace for c in boot["C"] if c["data"].hex().startswith(LOG_MAGIC_HEX)})
     summary["record_sectors"] = copies
     summary["header_sector"] = headers
-    if len(copies) != 2 or len(headers) != 1:
-        summary["error"] = "expected two record sectors in the trace"
+    if len(copies) != 2:
+        summary["error"] = f"expected two record sectors in the trace, found {len(copies)}"
         return {"two record sectors": False}
+    if len(headers) != 1:
+        summary["error"] = f"expected one log header sector in the trace, found {len(headers)}"
+        return {"one log header sector": False}
 
     lines = program()
     job = zlib.crc32("\n".join(lines).encode()) & 0xFFFFFFFF
     tally = {"cycles": 0, "cut_during_write": 0, "cut_at_random_time": 0, "in_flight": {}, "tear": {},
              "loaded_torn_write": 0, "unreadable_events_max": 0, "boot_died_before_link": 0}
     failures = []
-    log = open(os.path.join(args.run, "cycles.jsonl"), "w", buffering=1)
-
-    for cycle in range(args.cycles):
-        tally["cycles"] += 1
-        by_write = rng.random() >= args.random_share
-        cut_at = rng.randint(1, args.max_cut) if by_write else 0
-        kill_after = rng.uniform(0.3, args.stream_seconds) if not by_write else None
-        sim.env.update({"SIM_SD_CUT_AT": cut_at, "SIM_SD_SEED": args.seed * 100000 + cycle})
-        timing = {}
-        t_cycle = time.monotonic()
-        sim.start()
-        started = time.monotonic()
-        timing["boot"] = round(started - t_cycle, 2)
-        try:
-            link = connect(sim, timeout=4)
-            link.command("$H", timeout=5)
-            link.command(f"$FLIGHT={job:08X}")
-            stream(link, lines, started + (kill_after or args.stream_seconds), lambda: sim.proc.poll() is None)
-            link.close()
-        except (OSError, ConnectionError):
-            if sim.proc.poll() is not None and time.monotonic() - started < 2:
-                tally["boot_died_before_link"] += 1
-        died_by_cut = sim.proc.poll() is not None
-        sim.kill()
-        timing["run"] = round(time.monotonic() - started, 2)
-
-        boot = read_trace(trace_path)[-1]
-        finished = [c for c in boot["C"] if c["sector"] in copies]
-        last_finished = decode_record(finished[-1]["data"]) if finished else None
-        open_writes = {}
-        for w in boot["W"]:
-            open_writes[w["sector"]] = w
-        for c in boot["C"]:
-            if c["sector"] in open_writes and open_writes[c["sector"]]["t"] <= c["t"]:
-                del open_writes[c["sector"]]
-        in_flight = max(open_writes.values(), key=lambda w: w["t"]) if open_writes else None
-        kind = "none"
-        if in_flight:
-            kind = "record" if in_flight["sector"] in copies else (
-                "header" if in_flight["sector"] == headers[0] else "log" if headers[0] < in_flight["sector"] <= headers[0] + 33 else "other")
-            tally["tear"][in_flight["tear"]] = tally["tear"].get(in_flight["tear"], 0) + 1
-        tally["in_flight"][kind] = tally["in_flight"].get(kind, 0) + 1
-        tally["cut_during_write" if died_by_cut and cut_at else "cut_at_random_time"] += 1
-
-        on_card = [decode_record(read_sector(sim.card, sector)) for sector in copies]
-        expected = newest_valid(on_card)
-
-        # The next boot: no cut. A torn log sector is near the head, in the newest 200 events.
-        t_check = time.monotonic()
-        sim.env["SIM_SD_CUT_AT"] = 0
-        sim.start()
-        link = connect(sim)
-        reported = flight(link)
-        mounted = plugin_line(link) or ""
-        log_lines = events(link, 200)
-        unreadable = [line for line in log_lines if "unreadable" in line]
-        time.sleep(1.2)                 # let this boot's own writes finish before the next cut
-        link.close()
-        sim.kill()
-        timing["check"] = round(time.monotonic() - t_check, 2)
-
-        checks = {
-            "a copy survived": expected is not None,
-            "not older than the last finished": expected is None or last_finished is None or
-                                                ((expected["seq"] - last_finished["seq"]) & 0xFFFFFFFF) < 0x80000000,
-            "card mounts, SD storage": "(SD card)" in mounted,
-            "torn log sector at most": len(unreadable) <= 32,
-        }
-        if expected and reported:
-            state = "Stopped" if expected["state"] == 1 else ["Idle", "Running", "Stopped", "Retracted", "Completed"][expected["state"]]
-            checks["boot reports the newest valid copy"] = (int(reported["ln"]), int(reported["job"]), int(reported["boot"]), reported["state"]) == \
-                (expected["ln"], expected["job"], expected["boot"] + 1, state)
-        else:
-            checks["boot reports the newest valid copy"] = reported is not None
-        if expected and last_finished and expected["seq"] != last_finished["seq"]:
-            tally["loaded_torn_write"] += 1
-        tally["unreadable_events_max"] = max(tally["unreadable_events_max"], len(unreadable))
-
-        entry = {"cycle": cycle, "cut_at": cut_at, "kill_after": kill_after, "died_by_cut": died_by_cut,
-                 "in_flight": in_flight and {**in_flight, "kind": kind},
-                 "last_finished": last_finished and {k: last_finished[k] for k in ("seq", "ln", "boot", "state")},
-                 "on_card": [{k: r[k] for k in ("valid", "seq", "ln")} for r in on_card],
-                 "reported": reported, "unreadable": len(unreadable), "checks": checks, "timing": timing}
-        log.write(json.dumps(entry) + "\n")
-        if not all(checks.values()):
-            failures.append(entry)
-        print(f"cycle {cycle}: cut_at={cut_at} in_flight={kind} ln={reported and reported['ln']} "
-              f"{'ok' if all(checks.values()) else 'FAIL ' + str(checks)}", flush=True)
+    with open(os.path.join(args.run, "cycles.jsonl"), "w", buffering=1) as log:
+        for cycle in range(args.cycles):
+            entry = power_cycle(args, sim, trace_path, copies, headers[0], lines, job, cycle, rng, tally)
+            log.write(json.dumps(entry) + "\n")
+            checks = entry["checks"]
+            if not all(checks.values()):
+                failures.append(entry)
+            print(f"cycle {cycle}: cut_at={entry['cut_at']} in_flight={(entry['in_flight'] or {}).get('kind', 'none')} "
+                  f"ln={entry['reported'] and entry['reported']['ln']} "
+                  f"{'ok' if all(checks.values()) else 'FAIL ' + str(checks)}", flush=True)
 
     summary["tally"] = tally
     summary["failures"] = failures[:20]
     return {"every cycle passed": not failures}
 
 
+def newest_finished(trace, copies):
+    """The last record copy the card finished writing, in any boot so far."""
+    finished = [c for boot in trace for c in boot["C"] if c["sector"] in copies]
+    return decode_record(finished[-1]["data"]) if finished else None
+
+
+def power_cycle(args, sim, trace_path, copies, header, lines, job, cycle, rng, tally):
+    """One boot that streams the job and is cut, then a boot that checks what it left."""
+    tally["cycles"] += 1
+    by_write = rng.random() >= args.random_share
+    cut_at = rng.randint(1, args.max_cut) if by_write else 0
+    kill_after = rng.uniform(0.3, args.stream_seconds) if not by_write else None
+    sim.env.update({"SIM_SD_CUT_AT": cut_at, "SIM_SD_SEED": args.seed * 100000 + cycle})
+    timing = {}
+    t_cycle = time.monotonic()
+    sim.start()
+    started = time.monotonic()
+    timing["boot"] = round(started - t_cycle, 2)
+    try:
+        link = connect(sim, timeout=4)
+        link.command("$H", timeout=5)
+        link.command(f"$FLIGHT={job:08X}")
+        stream(link, lines, started + (kill_after or args.stream_seconds), lambda: sim.proc.poll() is None)
+        link.close()
+    except (OSError, ConnectionError):
+        if sim.proc.poll() is not None and time.monotonic() - started < 2:
+            tally["boot_died_before_link"] += 1
+    died_by_cut = sim.proc.poll() is not None
+    sim.kill()
+    timing["run"] = round(time.monotonic() - started, 2)
+
+    trace = read_trace(trace_path)
+    boot = trace[-1]
+    last_finished = newest_finished(trace, copies)
+    open_writes = {}
+    for w in boot["W"]:
+        open_writes[w["sector"]] = w
+    for c in boot["C"]:
+        if c["sector"] in open_writes and open_writes[c["sector"]]["t"] <= c["t"]:
+            del open_writes[c["sector"]]
+    in_flight = max(open_writes.values(), key=lambda w: w["t"]) if open_writes else None
+    kind = "none"
+    if in_flight:
+        kind = "record" if in_flight["sector"] in copies else (
+            "header" if in_flight["sector"] == header else "log" if header < in_flight["sector"] <= header + LOG_SECTORS else "other")
+        tally["tear"][in_flight["tear"]] = tally["tear"].get(in_flight["tear"], 0) + 1
+    tally["in_flight"][kind] = tally["in_flight"].get(kind, 0) + 1
+    tally["cut_during_write" if died_by_cut and cut_at else "cut_at_random_time"] += 1
+
+    on_card = [decode_record(read_sector(sim.card, sector)) for sector in copies]
+    expected = newest_valid(on_card)
+
+    # The next boot: no cut. A torn log sector is near the head, in the newest 200 events.
+    t_check = time.monotonic()
+    sim.env["SIM_SD_CUT_AT"] = 0
+    sim.start()
+    link = connect(sim)
+    reported = query_flight(link)
+    mounted = plugin_line(link) or ""
+    log_lines = events(link, 200)
+    unreadable = [line for line in log_lines if "unreadable" in line]
+    time.sleep(1.2)                 # let this boot's own writes finish before the next cut
+    link.close()
+    sim.kill()
+    timing["check"] = round(time.monotonic() - t_check, 2)
+
+    checks = {
+        "a copy survived": expected is not None,
+        "not older than the last finished": expected is None or last_finished is None or
+                                            ((expected["seq"] - last_finished["seq"]) & 0xFFFFFFFF) < 0x80000000,
+        "card mounts, SD storage": "(SD card)" in mounted,
+        "torn log sector at most": len(unreadable) <= 32,
+    }
+    if expected and reported:
+        # A record still Running at boot is reported as Stopped, why=reboot.
+        running = expected["state"] == STATES.index("Running")
+        state = "Stopped" if running else STATES[expected["state"]]
+        why = "reboot" if running else REASONS[expected["reason"]]
+        checks["boot reports the newest valid copy"] =             (reported["ln"], reported["job"], int(reported["boot"]), reported["state"], reported["why"]) ==             (expected["ln"], expected["job"], expected["boot"] + 1, state, why)
+    else:
+        checks["boot reports the newest valid copy"] = reported is not None
+    if expected and last_finished and expected["seq"] != last_finished["seq"]:
+        tally["loaded_torn_write"] += 1
+    tally["unreadable_events_max"] = max(tally["unreadable_events_max"], len(unreadable))
+
+    return {"cycle": cycle, "cut_at": cut_at, "kill_after": kill_after, "died_by_cut": died_by_cut,
+            "in_flight": in_flight and {**in_flight, "kind": kind},
+            "last_finished": last_finished and {k: last_finished[k] for k in ("seq", "ln", "boot", "state")},
+            "on_card": [{k: r[k] for k in ("valid", "seq", "ln")} for r in on_card],
+            "reported": reported, "unreadable": len(unreadable), "checks": checks, "timing": timing}
+
+
 # pause
 
 def run_pause(args, summary):
-    sim = Sim(args.sim, args.run, ws_port=WS_PORT, speed=1.0, sd=True,
+    sim = Sim(args.sim, args.run, ws_port=args.port, speed=1.0, sd=True,
               env={"SIM_SD_SEED": args.seed, "SIM_SD_PAUSE": args.pause})
     trace_path = sim.card + ".trace"
     sim.start()
@@ -412,7 +438,7 @@ def run_pause(args, summary):
 # storm
 
 def run_storm(args, summary):
-    sim = Sim(args.sim, args.run, ws_port=WS_PORT, speed=1.0, sd=True, env={"SIM_SD_SEED": args.seed})
+    sim = Sim(args.sim, args.run, ws_port=args.port, speed=1.0, sd=True, env={"SIM_SD_SEED": args.seed})
     trace_path = sim.card + ".trace"
     sim.start()
     link = connect(sim)
@@ -482,7 +508,7 @@ def run_storm(args, summary):
     alarm_kept = any("|boot=1|" in line and "ALARM|alarm=9" in line for line in after_alarm)
     error_kept = any("|boot=2|" in line and "ERROR" in line for line in after_error)
     summary["alarm_kept"] = alarm_kept
-    summary["error_kept_without_batching_only"] = error_kept    # expected False when events are batched
+    summary["error_on_card"] = error_kept     # False when events are batched: the cut came first
     return {
         "alarm on the card despite the cut": alarm_kept,
         "log readable, in order": summary["log"]["unreadable"] == 0 and summary["log"]["in_order"],
@@ -490,9 +516,38 @@ def run_storm(args, summary):
     }
 
 
+# What each scenario prints besides the checks. The whole summary is in summary.json.
+SHOWN = {
+    "power": ["plugin", "record_sectors", "header_sector", "tally"],
+    "pause": ["plugin", "lines_sent", "status", "card", "record", "stats"],
+    "storm": ["plugin", "burst", "log", "alarm_kept", "error_on_card"],
+}
+
+
+def prepare_run(path):
+    """Empties the run folder, but only one that is new, empty or an earlier run's."""
+    if os.path.isdir(path) and os.listdir(path):
+        if not any(os.path.exists(os.path.join(path, name)) for name in ("summary.json", "card.img")):
+            sys.exit(f"{path} has files in it but doesn't look like an earlier run (no summary.json or card.img), "
+                     "so it isn't deleted. Pick another --run.")
+        shutil.rmtree(path)
+    os.makedirs(path, exist_ok=True)
+
+
+def print_result(summary, path):
+    for key in SHOWN[summary["scenario"]]:
+        if key in summary:
+            print(f"{key}: {json.dumps(summary[key], default=str)}")
+    if "error" in summary:
+        print(f"error: {summary['error']}")
+    for name, ok in summary["checks"].items():
+        print(f"{'PASS' if ok else 'FAIL'}  {name}")
+    print(f"{'passed' if summary['passed'] else 'FAILED'}, full summary in {path}")
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("scenario", choices=["power", "pause", "storm"])
+    parser.add_argument("scenario", choices=list(SHOWN))
     parser.add_argument("--sim", required=True)
     parser.add_argument("--run", required=True)
     parser.add_argument("--seed", type=int, default=1)
@@ -509,20 +564,18 @@ def main():
     parser.add_argument("--events", type=int, default=1000)
     args = parser.parse_args()
 
-    global WS_PORT
-    WS_PORT = args.port
-    shutil.rmtree(args.run, ignore_errors=True)
-    os.makedirs(args.run)
+    prepare_run(args.run)
     summary = {"scenario": args.scenario, "args": vars(args)}
     checks = {}
+    path = os.path.join(args.run, "summary.json")
     try:
         checks = {"power": run_power, "pause": run_pause, "storm": run_storm}[args.scenario](args, summary)
     finally:
         summary["checks"] = checks
         summary["passed"] = bool(checks) and all(checks.values())
-        with open(os.path.join(args.run, "summary.json"), "w") as f:
+        with open(path, "w") as f:
             json.dump(summary, f, indent=1, default=str)
-        print(json.dumps({k: summary[k] for k in summary if k not in ("setup", "failures", "args")}, indent=1, default=str)[:6000])
+        print_result(summary, path)
     sys.exit(0 if summary["passed"] else 1)
 
 
